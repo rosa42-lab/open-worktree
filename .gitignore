@@ -9,3 +9,6 @@ __pycache__/
 *.db-shm
 .venv/
 venv/
+# Generated local OpenCode skill copy is tracked as source under skills/;
+# .opencode/skills is install output — ignore if you prefer not to commit:
+# .opencode/

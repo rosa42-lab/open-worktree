@@ -1,4 +1,4 @@
-"""SQLite connection management and schema (task T-0105)."""
+"""SQLite connection management and schema bootstrap."""
 
 from __future__ import annotations
 
@@ -9,57 +9,10 @@ from typing import Iterator
 
 from orch.constants import DB_BUSY_TIMEOUT_MS, project_data_dir, project_db_path
 from orch.errors import DbError
+from orch.migrations import SCHEMA_V1_SQL, ensure_schema
 
-SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS tasks (
-  id TEXT PRIMARY KEY,
-  agent_name TEXT NOT NULL,
-  branch_name TEXT NOT NULL,
-  worktree_path TEXT NOT NULL,
-  priority INTEGER NOT NULL DEFAULT 1,
-  status TEXT NOT NULL,
-  submitted_at TEXT NOT NULL,
-  source_commit TEXT NOT NULL,
-  target_head_before TEXT NOT NULL,
-  target_commit_at_claim TEXT,
-  queue_seq INTEGER NOT NULL UNIQUE,
-  claimed_at TEXT,
-  finished_at TEXT,
-  merged_commit TEXT,
-  last_error TEXT,
-  conflict_files TEXT,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  archived_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS audit_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id TEXT,
-  action TEXT NOT NULL,
-  detail TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS counters (
-  name TEXT PRIMARY KEY,
-  value INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_tasks_status_priority
-  ON tasks(status, priority, submitted_at);
-
-CREATE INDEX IF NOT EXISTS idx_tasks_status_seq
-  ON tasks(status, queue_seq);
-
-CREATE INDEX IF NOT EXISTS idx_tasks_branch
-  ON tasks(branch_name);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_branch_active
-  ON tasks(branch_name)
-  WHERE status IN ('pending', 'merging', 'conflict', 'recovery_required');
-
-INSERT OR IGNORE INTO counters(name, value) VALUES ('queue_seq', 0);
-"""
+# Back-compat alias: historical callers / tests expect SCHEMA_SQL == v1 DDL.
+SCHEMA_SQL = SCHEMA_V1_SQL
 
 
 def connect(db_path: Path | str) -> sqlite3.Connection:
@@ -83,10 +36,22 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
+    """
+    Ensure project DB is at schema 2 (idempotent).
+
+    Empty DB -> full schema 2; exact v1.1 shape -> additive migration;
+    already v2 -> no-op. Ambiguous / unsupported schemas raise.
+    """
     try:
-        conn.executescript(SCHEMA_SQL)
-        conn.commit()
-    except sqlite3.Error as exc:
+        ensure_schema(conn)
+    except DbError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # OrchError subclasses already carry exit codes; re-raise as-is.
+        from orch.errors import OrchError
+
+        if isinstance(exc, OrchError):
+            raise
         raise DbError(f"schema init failed: {exc}", details={"error": str(exc)}) from exc
 
 

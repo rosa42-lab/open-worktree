@@ -1,0 +1,2 @@
+timestamp=2026-07-26T11:59:13.860Z level=INFO run=f6f3254b message="loading tui config" path="C:\\Users\\superRobot\\.config\\opencode\\tui.json"
+timestamp=2026-07-26T11:59:13.867Z level=INFO run=f6f3254b message="applying tui config" path="C:\\Users\\superRobot\\.config\\opencode\\tui.json" order=1

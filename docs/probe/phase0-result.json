@@ -1,0 +1,350 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "command": "runtime.probe",
+  "data": {
+    "probed_at": "2026-07-26T11:13:02Z",
+    "opencode_cli_version": "1.18.5",
+    "opencode_server_version": "1.18.5",
+    "base_url": "http://127.0.0.1:59691",
+    "candidate_min_version": "1.18.5",
+    "supported_min_version": "1.18.5",
+    "architecture_decision": "shared",
+    "architecture_note": "Shared Server + per-directory InstanceContext remains the default (D1).",
+    "phase0_pass": true,
+    "capabilities": {
+      "global_health": true,
+      "directory_header": true,
+      "directory_query": true,
+      "create_session": true,
+      "get_session": true,
+      "session_status": true,
+      "event_sse": true,
+      "abort": true,
+      "instance_dispose": true,
+      "prompt_async": true,
+      "session_fork_api": true,
+      "attach_cli_dir": true,
+      "attach_cli_session": true,
+      "attach_cli_fork": true,
+      "basic_auth": true,
+      "path_api": true,
+      "vcs_api": true,
+      "shell_api": false
+    },
+    "checks": [
+      {
+        "name": "attach_cli_flags",
+        "ok": true,
+        "detail": "opencode attach --help flag scan",
+        "evidence": {
+          "dir": true,
+          "session": true,
+          "fork": true,
+          "password": true,
+          "username": true
+        }
+      },
+      {
+        "name": "global_health",
+        "ok": true,
+        "detail": "/global/health",
+        "evidence": {
+          "health": {
+            "healthy": true,
+            "version": "1.18.5"
+          },
+          "base_url": "http://127.0.0.1:59691"
+        }
+      },
+      {
+        "name": "basic_auth",
+        "ok": true,
+        "detail": "wrong password rejected with HTTP 401",
+        "evidence": {}
+      },
+      {
+        "name": "directory_routing_path_vcs",
+        "ok": true,
+        "detail": "GET /path + /vcs via x-opencode-directory",
+        "evidence": {
+          "dir_a": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a",
+          "dir_b": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-b",
+          "cwd_a": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a",
+          "cwd_b": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-b",
+          "branch_a": "probe/agent-a",
+          "branch_b": "probe/agent-b",
+          "path_a": {
+            "home": "C:\\Users\\superRobot",
+            "state": "C:\\Users\\superRobot\\.local\\state\\opencode",
+            "config": "C:\\Users\\superRobot\\.config\\opencode",
+            "worktree": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a",
+            "directory": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a"
+          },
+          "path_b": {
+            "home": "C:\\Users\\superRobot",
+            "state": "C:\\Users\\superRobot\\.local\\state\\opencode",
+            "config": "C:\\Users\\superRobot\\.config\\opencode",
+            "worktree": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-b",
+            "directory": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-b"
+          },
+          "vcs_a": {
+            "branch": "probe/agent-a",
+            "default_branch": null
+          },
+          "vcs_b": {
+            "branch": "probe/agent-b",
+            "default_branch": null
+          }
+        }
+      },
+      {
+        "name": "directory_query_param",
+        "ok": true,
+        "detail": "GET /path?directory=",
+        "evidence": {
+          "cwd": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a"
+        }
+      },
+      {
+        "name": "create_session",
+        "ok": true,
+        "detail": "POST /session per directory",
+        "evidence": {
+          "session_a": "ses_061df5f1affebEcKcWFZARruex",
+          "session_b": "ses_061df5efeffes0voGkQiNXjyKD"
+        }
+      },
+      {
+        "name": "get_session_and_list",
+        "ok": true,
+        "detail": "GET /session/:id and /session list",
+        "evidence": {
+          "list_a_has_a": true,
+          "list_b_has_b": true,
+          "cross_a_has_b": false,
+          "cross_b_has_a": false
+        }
+      },
+      {
+        "name": "session_status",
+        "ok": true,
+        "detail": "GET /session/status",
+        "evidence": {
+          "keys": []
+        }
+      },
+      {
+        "name": "file_mutation_isolation",
+        "ok": true,
+        "detail": "shell API returned without creating markers; verified via worktree writes + /file/content directory scope",
+        "evidence": {
+          "marker_a": "PROBE_A_a1309912.txt",
+          "marker_b": "PROBE_B_cf9fbadb.txt",
+          "a_has_a": true,
+          "b_has_b": true,
+          "a_leaked_b": false,
+          "b_leaked_a": false,
+          "shell_ok": false,
+          "api_scoped": true,
+          "cross_a_reads_b": false,
+          "cross_b_reads_a": false
+        }
+      },
+      {
+        "name": "event_sse",
+        "ok": true,
+        "detail": "GET /event?directory= SSE connect + no cross-session leak",
+        "evidence": {
+          "connected_a": true,
+          "connected_b": true,
+          "events_a_count": 1,
+          "events_b_count": 1,
+          "leak_a2_to_b": false,
+          "sample_a": [
+            {
+              "event": "message",
+              "data": {
+                "id": "evt_f9e20c99000107Mj2ODiWtwEHo",
+                "type": "server.connected",
+                "properties": {}
+              }
+            }
+          ],
+          "sample_b": [
+            {
+              "event": "message",
+              "data": {
+                "id": "evt_f9e20d56d001ZlJPAyZS5efmp1",
+                "type": "server.connected",
+                "properties": {}
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "sse_reconnect_status_compensate",
+        "ok": true,
+        "detail": "after SSE idle disconnect, /global/health + /session/status still work",
+        "evidence": {
+          "healthy": true,
+          "status_keys": []
+        }
+      },
+      {
+        "name": "abort",
+        "ok": true,
+        "detail": "abort returned True",
+        "evidence": {
+          "session": "ses_061df5f1affebEcKcWFZARruex"
+        }
+      },
+      {
+        "name": "session_fork_api",
+        "ok": true,
+        "detail": "forked session ses_061df226affecMl2kqBMc7uKhn",
+        "evidence": {
+          "parent": "ses_061df5f1affebEcKcWFZARruex",
+          "fork": "ses_061df226affecMl2kqBMc7uKhn"
+        }
+      },
+      {
+        "name": "prompt_async",
+        "ok": true,
+        "detail": "prompt_async accepted (204/2xx)",
+        "evidence": {}
+      },
+      {
+        "name": "attach_command",
+        "ok": true,
+        "detail": "Desktop fallback attach commands (not auto-launched)",
+        "evidence": {
+          "attach": "opencode attach http://127.0.0.1:59691 --dir C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a --session ses_061df5f1affebEcKcWFZARruex",
+          "attach_fork": "opencode attach http://127.0.0.1:59691 --dir C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a --session ses_061df5f1affebEcKcWFZARruex --fork",
+          "desktop_note": "Add Server once in OpenCode Desktop to this base_url; locate sessions by id. Do not modify Desktop localStorage."
+        }
+      },
+      {
+        "name": "instance_dispose",
+        "ok": true,
+        "detail": "dispose returned True",
+        "evidence": {
+          "directory": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-b"
+        }
+      },
+      {
+        "name": "shared_server_survives_dispose",
+        "ok": true,
+        "detail": "disposing one instance must not kill shared Server",
+        "evidence": {
+          "health": {
+            "healthy": true,
+            "version": "1.18.5"
+          }
+        }
+      },
+      {
+        "name": "peer_instance_after_dispose",
+        "ok": true,
+        "detail": "directory A still routable after B dispose",
+        "evidence": {
+          "path_a": {
+            "home": "C:\\Users\\superRobot",
+            "state": "C:\\Users\\superRobot\\.local\\state\\opencode",
+            "config": "C:\\Users\\superRobot\\.config\\opencode",
+            "worktree": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a",
+            "directory": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a"
+          }
+        }
+      }
+    ],
+    "hypotheses": [
+      {
+        "id": "H1",
+        "risk": "致命",
+        "statement": "installed OpenCode 支持稳定 directory routing",
+        "status": "pass",
+        "detail": "path/vcs/session + file markers isolated across two worktrees",
+        "gate": "编码前 / Phase 0"
+      },
+      {
+        "id": "H2",
+        "risk": "致命",
+        "statement": "Desktop 一次 Add Server 后能观察多目录 sessions",
+        "status": "deferred",
+        "detail": "Automated probe cannot drive Desktop UI; attach commands recorded. Complete desktop_acceptance checklist before closing Phase 0.",
+        "gate": "Phase 0"
+      },
+      {
+        "id": "H3",
+        "risk": "高",
+        "statement": "abort 后可确定等待到 idle",
+        "status": "partial",
+        "detail": "abort endpoint verified; busy->idle timing deferred to takeover gate",
+        "gate": "takeover 前"
+      },
+      {
+        "id": "H4",
+        "risk": "高",
+        "statement": "attach 原 session 与 --fork 行为稳定",
+        "status": "partial",
+        "detail": "CLI flags + POST /session/:id/fork OK; interactive attach E2E deferred",
+        "gate": "takeover 前"
+      },
+      {
+        "id": "H5",
+        "risk": "高",
+        "statement": "SSE 断线后可通过 status 补偿",
+        "status": "pass",
+        "detail": "SSE idle disconnect then health+status succeeded",
+        "gate": "worker 前"
+      },
+      {
+        "id": "H6",
+        "risk": "高",
+        "statement": "session API 提供足够幂等标识避免 prompt 重放",
+        "status": "partial",
+        "detail": "session ids stable via create/get; prompt replay/idempotency deferred to worker gate",
+        "gate": "worker 前"
+      },
+      {
+        "id": "H7",
+        "risk": "高",
+        "statement": "stdlib HTTP/SSE 客户端能可靠处理认证、压缩和重连",
+        "status": "pass",
+        "detail": "stdlib urllib Basic Auth + SSE framing exercised against real Server",
+        "gate": "adapter 前"
+      }
+    ],
+    "sessions": {
+      "a": "ses_061df5f1affebEcKcWFZARruex",
+      "b": "ses_061df5efeffes0voGkQiNXjyKD"
+    },
+    "directories": {
+      "a": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a",
+      "b": "C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-b"
+    },
+    "attach_commands": {
+      "session_a": "opencode attach http://127.0.0.1:59691 --dir C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a --session ses_061df5f1affebEcKcWFZARruex",
+      "session_a_fork": "opencode attach http://127.0.0.1:59691 --dir C:\\Users\\superRobot\\AppData\\Local\\Temp\\orch-runtime-probe-nrmhjcda\\worktree-a --session ses_061df5f1affebEcKcWFZARruex --fork"
+    },
+    "desktop_acceptance": {
+      "status": "manual_required",
+      "steps": [
+        "Add Server once in OpenCode Desktop pointing at base_url",
+        "Confirm both session ids appear / can be opened without a second Add Server",
+        "If Desktop project sidebar confuses worktrees, use attach_commands fallback",
+        "Do not modify Desktop internal storage from orch"
+      ]
+    },
+    "constraints_honored": {
+      "stdlib_only": true,
+      "no_project_db": true,
+      "no_project_lock": true,
+      "no_git_project_mutation": true,
+      "no_desktop_storage_write": true
+    }
+  },
+  "error": null
+}

@@ -1,0 +1,18 @@
+﻿{
+    "worktree_a":  "E:\\orch-h2-probe\\worktree-a",
+    "created_at":  "2026-07-26T20:40:51.3177561+08:00",
+    "server_url":  "http://127.0.0.1:14196",
+    "session_b":  {
+                      "title":  "h2-manual-b",
+                      "directory":  "E:\\orch-h2-probe\\worktree-b",
+                      "id":  "ses_0618ebb62ffe9Hi9Y2JeswaW65"
+                  },
+    "session_a":  {
+                      "title":  "h2-manual-a",
+                      "directory":  "E:\\orch-h2-probe\\worktree-a",
+                      "id":  "ses_0618ebb9fffeORHaiDZdSdql6V"
+                  },
+    "worktree_b":  "E:\\orch-h2-probe\\worktree-b",
+    "auth":  "none",
+    "desktop_hint":  "Switch project/workspace to E:\\orch-h2-probe\\worktree-a and worktree-b (or search title h2-manual-a/b). Current miniprogram view is unrelated."
+}

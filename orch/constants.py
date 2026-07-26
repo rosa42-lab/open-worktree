@@ -21,6 +21,17 @@ CONFIG_LOCK_NAME = "config.json.lock"
 PROJECT_DB_NAME = "orchestrator.db"
 PROJECT_LOCK_NAME = "project.lock"
 
+# Host-level OpenCode runtime registry (v1.2)
+RUNTIME_DIR_NAME = "runtime"
+RUNTIME_REGISTRY_NAME = "opencode.json"
+RUNTIME_CREDENTIALS_NAME = "opencode.credentials.json"
+RUNTIME_LOCK_NAME = "opencode.lock"
+RUNTIME_LOG_DIR_NAME = "logs"
+RUNTIME_LOG_NAME = "opencode.log"
+DEFAULT_RUNTIME_PORT = 4096
+DEFAULT_RUNTIME_HOST = "127.0.0.1"
+DEFAULT_RUNTIME_USERNAME = "opencode"
+
 
 def orchestrator_home() -> Path:
     return Path.home() / ORCHESTRATOR_HOME_NAME
@@ -44,6 +55,30 @@ def project_db_path(project: str) -> Path:
 
 def project_lock_path(project: str) -> Path:
     return project_data_dir(project) / PROJECT_LOCK_NAME
+
+
+def runtime_dir() -> Path:
+    return orchestrator_home() / RUNTIME_DIR_NAME
+
+
+def runtime_registry_path() -> Path:
+    return runtime_dir() / RUNTIME_REGISTRY_NAME
+
+
+def runtime_credentials_path() -> Path:
+    return runtime_dir() / RUNTIME_CREDENTIALS_NAME
+
+
+def runtime_lock_path() -> Path:
+    return runtime_dir() / RUNTIME_LOCK_NAME
+
+
+def runtime_log_dir() -> Path:
+    return runtime_dir() / RUNTIME_LOG_DIR_NAME
+
+
+def runtime_log_path() -> Path:
+    return runtime_log_dir() / RUNTIME_LOG_NAME
 
 
 def skill_install_path() -> Path:

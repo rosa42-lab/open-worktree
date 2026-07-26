@@ -22,6 +22,8 @@ from orch.git.worktree import (
 )
 from orch.locks import acquire, release
 from orch.registry import get_project_path
+from orch.runtime.cleanup_guard import runtime_prune_blockers
+from orch.runtime.hooks import load_hooks_config, run_hook
 from orch.task_resolve import row_to_dict
 from orch.util import utc_now_iso
 from orch.validate import validate_project_name
@@ -105,6 +107,50 @@ def cmd_cleanup(project: str, *, prune: bool = False) -> dict[str, Any]:
 def _prune_one(conn, bare: Path, task: dict[str, Any]) -> dict[str, Any]:
     wt = Path(task["worktree_path"])
     branch = task["branch_name"]
+
+    # V12-011: runtime guards BEFORE any Git mutation
+    blockers = runtime_prune_blockers(
+        conn,
+        worktree_path=str(wt),
+        task_status=task.get("status"),
+    )
+    if blockers:
+        return {
+            "task_id": task["id"],
+            "ok": False,
+            "reason": "runtime_blocked",
+            "blockers": blockers,
+        }
+
+    # Optional BeforeWorktreeRemove hook (cannot bypass guards above)
+    try:
+        from orch.config import read_config
+
+        hooks = load_hooks_config(read_config())
+    except Exception:  # noqa: BLE001
+        hooks = {}
+    hook_cfg = hooks.get("BeforeWorktreeRemove") if isinstance(hooks, dict) else None
+    if isinstance(hook_cfg, dict) and hook_cfg.get("argv"):
+        try:
+            run_hook(
+                "BeforeWorktreeRemove",
+                argv=list(hook_cfg["argv"]),
+                payload={
+                    "project_task_id": task["id"],
+                    "worktree_path": str(wt),
+                    "branch": branch,
+                },
+                timeout_seconds=float(hook_cfg.get("timeout_seconds") or 10),
+                blocking=bool(hook_cfg.get("blocking")),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "task_id": task["id"],
+                "ok": False,
+                "reason": "hook_blocked",
+                "detail": str(exc),
+            }
+
     try:
         assert_worktree_owns_bare(wt, bare)
     except Exception as exc:
