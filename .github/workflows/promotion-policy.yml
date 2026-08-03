@@ -1,0 +1,30 @@
+name: promotion-policy
+
+# Required check for master-protection Ruleset.
+# Verifies that any PR targeting master comes from develop in the same repository.
+# Per design §6.3: base=master, head=develop, same repo. Any condition fails => PR unmergeable.
+#
+# This workflow reads only GitHub event metadata; it does not checkout PR code and uses no secrets.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  source-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require develop to master in the same repository
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          test "$BASE_REF" = "master"
+          test "$HEAD_REF" = "develop"
+          test "$BASE_REPO" = "$HEAD_REPO"

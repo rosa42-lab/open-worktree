@@ -1,0 +1,37 @@
+{
+  "ran_at": 1785585810,
+  "results": [
+    {
+      "name": "#4 Integration force-push develop",
+      "expected": "expect 403/422 (force blocked by develop-no-force)",
+      "status": 200,
+      "ok": true,
+      "blocked": false,
+      "body": "{'ref': 'refs/heads/develop', 'node_id': 'REF_kwDOTiehPbJyZWZzL2hlYWRzL2RldmVsb3A', 'url': 'https://api.github.com/repos/rosa42-lab/open-worktree/git/refs/heads/develop', 'object': {'sha': '565166b123"
+    },
+    {
+      "name": "#5 Release create PR develop->master",
+      "expected": "expect 201 (PR write granted)",
+      "status": 201,
+      "ok": true,
+      "blocked": false,
+      "body": "{'url': 'https://api.github.com/repos/rosa42-lab/open-worktree/pulls/2', 'id': 4183789082, 'node_id': 'PR_kwDOTiehPc75X44a', 'html_url': 'https://github.com/rosa42-lab/open-worktree/pull/2', 'diff_url"
+    },
+    {
+      "name": "#6 Release read PR",
+      "expected": "expect 200 (PR read granted)",
+      "status": 200,
+      "ok": true,
+      "blocked": false,
+      "body": "{'url': 'https://api.github.com/repos/rosa42-lab/open-worktree/pulls/2', 'id': 4183789082, 'node_id': 'PR_kwDOTiehPc75X44a', 'html_url': 'https://github.com/rosa42-lab/open-worktree/pull/2', 'diff_url"
+    },
+    {
+      "name": "#8 Release push to new branch",
+      "expected": "expect 403/422",
+      "status": 0,
+      "ok": false,
+      "blocked": false,
+      "body": "create commit: 403 {'message': 'Resource not accessible by integration', 'documentation_url': 'https://docs.github.com/rest/git/commits#create-a-commit', 'status': '403'}"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "repo": "rosa42-lab/open-worktree",
+  "generated_at": "2026-08-01T10:52:45Z",
+  "results": [
+    {
+      "item": "refs exist",
+      "expect": "develop+master present",
+      "ok": true,
+      "detail": "develop=910ae581de68 master=599bba62cb02"
+    },
+    {
+      "item": "Integration FF push develop",
+      "expect": "success",
+      "ok": true,
+      "detail": "HTTP 200 new=a1b410e982aa body={\"ref\": \"refs/heads/develop\", \"node_id\": \"REF_kwDOTiehPbJyZWZzL2hlYWRzL2RldmVsb3A\", \"url\": \"https://api.github.com/repos/rosa42-lab/open-worktree/git/refs/heads/develop\", \"object\": {\"sha\": \"a1b410e982aa844aa83f5af44f6a666eff16c685\", \"type\":"
+    },
+    {
+      "item": "Integration push master",
+      "expect": "rejected",
+      "ok": true,
+      "detail": "HTTP 422 {\"message\": \"Repository rule violations found\\n\\nCannot update this protected ref.\\n\\nChanges must be made through a pull request.\\n\\nRequired status check \\\"promotion-policy\\\" is expected.\\n\\n\", \"documentation_url\": \"https://docs.github.co"
+    },
+    {
+      "item": "Integration force push develop",
+      "expect": "rejected",
+      "ok": false,
+      "detail": "HTTP 200 {\"ref\": \"refs/heads/develop\", \"node_id\": \"REF_kwDOTiehPbJyZWZzL2hlYWRzL2RldmVsb3A\", \"url\": \"https://api.github.com/repos/rosa42-lab/open-worktree/git/refs/heads/develop\", \"object\": {\"sha\": \"599bba62cb029a95dc2a897fad9709f59058ecd9\", \"type\":"
+    },
+    {
+      "item": "CRITICAL develop force succeeded",
+      "expect": "must not happen",
+      "ok": false,
+      "detail": "manual recovery required"
+    },
+    {
+      "item": "Release create develop→master PR",
+      "expect": "success",
+      "ok": false,
+      "detail": "HTTP 403 {\"message\": \"Resource not accessible by integration\", \"documentation_url\": \"https://docs.github.com/rest/pulls/pulls#create-a-pull-request\", \"status\": \"403\"}"
+    },
+    {
+      "item": "Release read checks",
+      "expect": "can observe promotion-policy / statuses",
+      "ok": false,
+      "detail": "HTTP 403 {\"message\": \"Resource not accessible by integration\", \"documentation_url\": \"https://docs.github.com/rest/pulls/pulls#create-a-pull-request\", \"status\": \"403\"}; checks not observed within wait window"
+    },
+    {
+      "item": "Release push master",
+      "expect": "rejected",
+      "ok": true,
+      "detail": "HTTP 422 {\"message\": \"Repository rule violations found\\n\\nCannot update this protected ref.\\n\\nChanges must be made through a pull request.\\n\\nRequired status check \\\"promotion-policy\\\" is expected.\\n\\n\", \"documentation_url\": \"https://docs.github.co"
+    },
+    {
+      "item": "Release push arbitrary branch",
+      "expect": "rejected (Contents read-only)",
+      "ok": false,
+      "detail": "HTTP 201 {\"ref\": \"refs/heads/orch-phase0-probe-1785581559\", \"node_id\": \"REF_kwDOTiehPdoAJ3JlZnMvaGVhZHMvb3JjaC1waGFzZTAtcHJvYmUtMTc4NTU4MTU1OQ\", \"url\": \"https://api.github.com/repos/rosa42-lab/open-worktree/git/refs/heads/orch-phase0-probe-178558155"
+    },
+    {
+      "item": "promotion-policy rejects non-develop head",
+      "expect": "check conclusion=failure",
+      "ok": false,
+      "detail": "bad_pr=None conclusion=None"
+    },
+    {
+      "item": "master bypass has no App",
+      "expect": "no Integration bypass (OrganizationAdmin temp OK)",
+      "ok": false,
+      "detail": "bypass=[]"
+    },
+    {
+      "item": "Human approve+merge path",
+      "expect": "manual / OrganizationAdmin --admin (solo §8)",
+      "ok": true,
+      "detail": "skipped automation; PR#1 already proved merge-commit path"
+    },
+    {
+      "item": "PR merge commit parents include develop",
+      "expect": "verified historically on PR#1",
+      "ok": true,
+      "detail": "599bba62 parents include develop tip 910ae58"
+    }
+  ],
+  "cleanup": {
+    "prs": [],
+    "branches": [
+      "orch-phase0-probe-1785581559",
+      "orch-phase0-badhead-1785581560"
+    ]
+  },
+  "pass": false
+}

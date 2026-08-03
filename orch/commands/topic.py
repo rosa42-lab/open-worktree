@@ -280,7 +280,25 @@ def topic_ready(
                 f"verification record missing: {missing}",
                 kind="topic_verification_incomplete",
             )
+        commit_sha = str(verification["commit_sha"]).strip()
+        commands = verification["commands"]
+        if not isinstance(commands, list) or not commands:
+            raise ValidationError(
+                "verification.commands must be a non-empty list",
+                kind="topic_verification_incomplete",
+            )
         now = utc_now_iso()
+        from orch.verification.service import create_from_topic_ready
+
+        record = create_from_topic_ready(
+            conn,
+            project=project,
+            topic_id=topic_id,
+            commit_sha=commit_sha,
+            commands=[str(c) for c in commands],
+            created_by="topic-ready",
+            results=verification.get("results"),
+        )
         conn.execute(
             """
             UPDATE topics
@@ -296,7 +314,19 @@ def topic_ready(
             "topic_id": topic_id,
             "lifecycle_state": "ready",
             "result_state": "ready_for_enqueue",
-            "verification": verification,
+            "verification": {
+                "commit_sha": commit_sha,
+                "commands": list(commands),
+                "record_id": record["id"],
+            },
+            "verification_record_id": record["id"],
+            "verification_record": {
+                "id": record["id"],
+                "scope": record["scope"],
+                "commit_sha": record["commit_sha"],
+                "status": record["status"],
+                "expires_at": record["expires_at"],
+            },
             "enqueued": False,
         }
     finally:

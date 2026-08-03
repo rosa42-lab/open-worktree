@@ -50,9 +50,16 @@ def precheck_main(root: Path, bare: Path) -> str:
 def claim_next(
     conn: sqlite3.Connection,
     target_commit_for_claim: str,
+    *,
+    project_name: str | None = None,
 ) -> dict[str, Any] | None:
     """Claim next pending task. Returns task dict or None if empty."""
     with immediate_transaction(conn) as c:
+        if project_name:
+            from orch.promotion.guards import assert_no_release_freeze_precheck
+
+            assert_no_release_freeze_precheck(c, project_name)
+
         blocked = c.execute(
             """
             SELECT id, status FROM tasks

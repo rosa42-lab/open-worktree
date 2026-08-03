@@ -1,0 +1,8 @@
+# CODEOWNERS for rosa42-lab/open-worktree
+# Initial owner is @Rosa42 (organization owner). Replace with @rosa42-lab/release-approvers
+# once that team exists.
+#
+# Ruleset master-protection requires "Code owners" approval. GitHub counts only code owners
+# toward required approvals, so bot approvals from orch-release-app will NOT satisfy the rule.
+
+* @Rosa42

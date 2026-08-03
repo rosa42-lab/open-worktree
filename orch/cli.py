@@ -70,6 +70,17 @@ PROJECT_COMMANDS = frozenset(
         "topic-open",
         "topic-ready",
         "topic-archive",
+        "remote-config",
+        "remote-probe",
+        "remote-status",
+        "promote-develop",
+        "promotion-list",
+        "promotion-show",
+        "promotion-reconcile",
+        "promotion-cancel",
+        "release-create",
+        "release-status",
+        "release-sync",
     }
 )
 
@@ -289,6 +300,85 @@ def _parser_for_project(project: str) -> argparse.ArgumentParser:
     tr.add_argument("--command", action="append", default=[], help="verification command")
     ta = add("topic-archive", "archive topic product record")
     ta.add_argument("topic_id")
+
+    rc = add("remote-config", "write non-secret remote/provider promotion config")
+    rc.add_argument("--remote", default="origin")
+    rc.add_argument("--provider", default="github")
+    rc.add_argument("--repository", required=True, help="owner/name")
+    rc.add_argument("--api-base-url", default="https://api.github.com")
+    rc.add_argument("--integration", default="develop")
+    rc.add_argument("--stable", default="master")
+    rc.add_argument(
+        "--required-check",
+        action="append",
+        default=None,
+        dest="required_checks",
+        help="repeatable required check name",
+    )
+    rc.add_argument("--required-approvals", type=int, default=1)
+
+    rp = add("remote-probe", "read-only probe of git/provider capabilities")
+    rp.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="skip git fetch (still reports ref slots)",
+    )
+
+    rs = add("remote-status", "show local/remote develop/master SHA relations")
+    rs.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="skip git fetch before reading remote-tracking refs",
+    )
+
+    pd = add("promote-develop", "dry-run or CAS push local develop to origin/develop")
+    pd.add_argument(
+        "--execute",
+        action="store_true",
+        help="perform remote write (default is dry-run plan only)",
+    )
+    pd.add_argument(
+        "--verification",
+        default=None,
+        help="verification_record id (required with --execute)",
+    )
+    pd.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="skip git fetch during precheck",
+    )
+
+    pl = add("promotion-list", "list promotion_runs for project")
+    pl.add_argument("--kind", default=None, help="develop_publish|master_release")
+    pl.add_argument("--limit", type=int, default=50)
+
+    psh = add("promotion-show", "show promotion run + events + tasks")
+    psh.add_argument("promotion_id")
+
+    prc = add("promotion-reconcile", "read remote tip; never blind-push")
+    prc.add_argument("promotion_id")
+    prc.add_argument("--no-fetch", action="store_true")
+
+    pc = add("promotion-cancel", "cancel a non-terminal promotion with reason")
+    pc.add_argument("promotion_id")
+    pc.add_argument("--reason", required=True)
+    pc.add_argument("--actor", default="operator")
+    pc.add_argument("--no-fetch", action="store_true")
+
+    rcreate = add("release-create", "create develop→master Promotion PR (default dry-run)")
+    rcreate.add_argument("--verification", required=True)
+    rcreate.add_argument("--title", default=None)
+    rcreate.add_argument("--execute", action="store_true")
+    rcreate.add_argument("--no-fetch", action="store_true")
+
+    rstatus = add("release-status", "observe Promotion PR; never mark released")
+    rstatus.add_argument("promotion_id")
+    rstatus.add_argument("--no-fetch", action="store_true")
+
+    rsync = add("release-sync", "FF-sync release merge commit back to develop")
+    rsync.add_argument("promotion_id")
+    rsync.add_argument("--execute", action="store_true")
+    rsync.add_argument("--no-fetch", action="store_true")
     return p
 
 
@@ -581,6 +671,100 @@ def _dispatch(args: argparse.Namespace, *, project: str | None) -> tuple[str, An
         from orch.commands.topic import topic_archive
 
         return name, topic_archive(project, args.topic_id)
+    if cmd == "remote-config":
+        from orch.commands.remote import cmd_remote_config
+
+        return name, cmd_remote_config(
+            project,
+            remote=args.remote,
+            provider=args.provider,
+            repository=args.repository,
+            api_base_url=getattr(args, "api_base_url", "https://api.github.com"),
+            integration=args.integration,
+            stable=args.stable,
+            required_checks=getattr(args, "required_checks", None),
+            required_approvals=int(getattr(args, "required_approvals", 1)),
+        )
+    if cmd == "remote-probe":
+        from orch.commands.remote import cmd_remote_probe
+
+        return name, cmd_remote_probe(
+            project,
+            fetch=not bool(getattr(args, "no_fetch", False)),
+        )
+    if cmd == "remote-status":
+        from orch.commands.remote import cmd_remote_status
+
+        return name, cmd_remote_status(
+            project,
+            fetch=not bool(getattr(args, "no_fetch", False)),
+        )
+    if cmd == "promote-develop":
+        from orch.commands.promotion import cmd_promote_develop
+
+        return name, cmd_promote_develop(
+            project,
+            execute=bool(getattr(args, "execute", False)),
+            verification=getattr(args, "verification", None),
+            no_fetch=bool(getattr(args, "no_fetch", False)),
+        )
+    if cmd == "promotion-list":
+        from orch.commands.promotion import cmd_promotion_list
+
+        return name, cmd_promotion_list(
+            project,
+            kind=getattr(args, "kind", None),
+            limit=int(getattr(args, "limit", 50)),
+        )
+    if cmd == "promotion-show":
+        from orch.commands.promotion import cmd_promotion_show
+
+        return name, cmd_promotion_show(project, args.promotion_id)
+    if cmd == "promotion-reconcile":
+        from orch.commands.promotion import cmd_promotion_reconcile
+
+        return name, cmd_promotion_reconcile(
+            project,
+            args.promotion_id,
+            no_fetch=bool(getattr(args, "no_fetch", False)),
+        )
+    if cmd == "promotion-cancel":
+        from orch.commands.promotion import cmd_promotion_cancel
+
+        return name, cmd_promotion_cancel(
+            project,
+            args.promotion_id,
+            reason=str(args.reason),
+            actor=str(getattr(args, "actor", "operator")),
+            no_fetch=bool(getattr(args, "no_fetch", False)),
+        )
+    if cmd == "release-create":
+        from orch.commands.promotion import cmd_release_create
+
+        return name, cmd_release_create(
+            project,
+            verification=str(args.verification),
+            title=getattr(args, "title", None),
+            execute=bool(getattr(args, "execute", False)),
+            no_fetch=bool(getattr(args, "no_fetch", False)),
+        )
+    if cmd == "release-status":
+        from orch.commands.promotion import cmd_release_status
+
+        return name, cmd_release_status(
+            project,
+            args.promotion_id,
+            no_fetch=bool(getattr(args, "no_fetch", False)),
+        )
+    if cmd == "release-sync":
+        from orch.commands.promotion import cmd_release_sync
+
+        return name, cmd_release_sync(
+            project,
+            args.promotion_id,
+            execute=bool(getattr(args, "execute", False)),
+            no_fetch=bool(getattr(args, "no_fetch", False)),
+        )
     raise UsageError(f"unknown command: {cmd}")
 
 
