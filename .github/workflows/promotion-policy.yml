@@ -9,6 +9,7 @@ name: promotion-policy
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    branches: [master]
 
 permissions:
   contents: read
@@ -16,6 +17,7 @@ permissions:
 
 jobs:
   source-policy:
+    name: promotion-policy
     runs-on: ubuntu-latest
     steps:
       - name: Require develop to master in the same repository
