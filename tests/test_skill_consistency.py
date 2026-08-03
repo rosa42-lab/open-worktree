@@ -22,7 +22,7 @@ REQUIRED_SNIPPETS = [
     "topic-ready",
     "runtime_blocked",
     "develop",
-    "1.3.0-candidate",
+    "1.3.0",
     "promote-develop",
     "release-sync",
     "remote-probe",

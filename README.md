@@ -1,9 +1,9 @@
-# orch — Multi-Agent Worktree Orchestrator (v1.3 candidate)
+# orch — Multi-Agent Worktree Orchestrator (v1.3)
 
 Global CLI for coordinating multiple agents on one machine against a shared Git bare repository. Merges into **`develop` only**, via a deterministic queue (`priority` → `submitted_at` → `queue_seq`). v1.2 adds OpenCode **runtime / agent lifecycle / takeover / topics**. **v1.3** adds **remote promotion** (`promote-develop`) and **release** (`release-create` / `release-sync`).
 
-**Status:** `1.3.0-candidate` — Phase 0–3 implemented; E2E夹具 + contracts green.  
-**Ready gate:** see `docs/v1.3-ready-checklist.md` (section D must be signed before dropping `-candidate`).  
+**Status:** `1.3.0` — D gate signed 2026-08-04; Phase 0–3 + Agent E2E evidence on file.
+**Ready gate:** `docs/v1.3-ready-checklist.md` (signed).
 **v1.2 gate (historical):** `docs/v1.2-ready-checklist.md`
 
 ## Requirements
