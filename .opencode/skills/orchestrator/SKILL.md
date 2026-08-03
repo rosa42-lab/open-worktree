@@ -3,11 +3,11 @@ name: orchestrator
 description: Multi-agent worktree + OpenCode runtime orchestration CLI (orch). Use for merge queue, worktrees, runtime Server, agent lifecycle, takeover, topics, remote promotion/release, and cleanup in an orch-managed project.
 ---
 
-# Orchestrator (v1.3 candidate)
+# Orchestrator (v1.3)
 
 Use `orch` for every managed Git write that affects the merge queue or `develop`, OpenCode Agent runtime control, and **remote branch promotion / release** on this host. Target integration branch is always `develop`. Python stdlib only.
 
-**Version:** keep `1.3.0-candidate` until `docs/v1.3-ready-checklist.md` release gates are signed.
+**Version:** `1.3.0`（`docs/v1.3-ready-checklist.md` D 门已签）。
 
 ## Merge queue workflow (v1.1 unchanged)
 
