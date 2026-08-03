@@ -43,7 +43,7 @@ def cmd_merge(project: str, *, once: bool = False) -> dict[str, Any]:
                 raise
 
             try:
-                task = claim_next(conn, target_for_claim)
+                task = claim_next(conn, target_for_claim, project_name=project)
             except QueueBlockedError:
                 raise
 

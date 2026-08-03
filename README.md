@@ -1,10 +1,10 @@
-# orch — Multi-Agent Worktree Orchestrator (v1.2 candidate)
+# orch — Multi-Agent Worktree Orchestrator (v1.3 candidate)
 
-Global CLI for coordinating multiple agents on one machine against a shared Git bare repository. Merges into **`develop` only**, via a deterministic queue (`priority` → `submitted_at` → `queue_seq`). v1.2 adds OpenCode **runtime / agent lifecycle / takeover / topics**.
+Global CLI for coordinating multiple agents on one machine against a shared Git bare repository. Merges into **`develop` only**, via a deterministic queue (`priority` → `submitted_at` → `queue_seq`). v1.2 adds OpenCode **runtime / agent lifecycle / takeover / topics**. **v1.3** adds **remote promotion** (`promote-develop`) and **release** (`release-create` / `release-sync`).
 
-**Status:** `1.2.0-candidate` — Phase 0–4 + Skill/docs packaged.  
-**Ready gate:** see `docs/v1.2-ready-checklist.md` (section D must be signed before dropping `-candidate`).  
-**v1.1 gate (historical):** `docs/ready-checklist.md`
+**Status:** `1.3.0-candidate` — Phase 0–3 implemented; E2E夹具 + contracts green.  
+**Ready gate:** see `docs/v1.3-ready-checklist.md` (section D must be signed before dropping `-candidate`).  
+**v1.2 gate (historical):** `docs/v1.2-ready-checklist.md`
 
 ## Requirements
 
@@ -124,6 +124,10 @@ Full guide: [`docs/opencode-multi-session.md`](docs/opencode-multi-session.md)
 
 | Doc | Purpose |
 |-----|---------|
+| `docs/current-architecture.md` | Current architecture, implementation principles, gaps, and next-stage guidance |
+| `docs/usage-scenarios.md` | Visual end-to-end scenarios for merge queue and agent takeover workflows |
+| `docs/remote-branch-promotion-design.md` | Detailed design for develop promotion and protected master releases |
+| `docs/v1.3-tasks.md` | Phased implementation tasks and gates for remote branch promotion |
 | `docs/v1.2-upgrade-plan.md` | v1.2 design / phases |
 | `docs/tasks.md` | v1.2 task tracker |
 | `docs/v1.2-acceptance-results.md` | v1.2 acceptance matrix |

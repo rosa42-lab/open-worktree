@@ -37,10 +37,10 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
 
 def init_schema(conn: sqlite3.Connection) -> None:
     """
-    Ensure project DB is at schema 2 (idempotent).
+    Ensure project DB is at schema 3 (idempotent).
 
-    Empty DB -> full schema 2; exact v1.1 shape -> additive migration;
-    already v2 -> no-op. Ambiguous / unsupported schemas raise.
+    Empty DB -> full schema 3; exact v1.1 -> additive; v2 -> verification_records;
+    already v3 -> no-op. Ambiguous / unsupported schemas raise.
     """
     try:
         ensure_schema(conn)

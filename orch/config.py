@@ -13,7 +13,7 @@ from orch.locks import acquire, release
 
 
 def _default_config() -> dict[str, Any]:
-    return {"projects": {}}
+    return {"projects": {}, "promotion": {}}
 
 
 def read_config() -> dict[str, Any]:
@@ -31,6 +31,8 @@ def read_config() -> dict[str, Any]:
         ) from exc
     if "projects" not in data or not isinstance(data["projects"], dict):
         data["projects"] = {}
+    if "promotion" not in data or not isinstance(data.get("promotion"), dict):
+        data["promotion"] = {}
     return data
 
 

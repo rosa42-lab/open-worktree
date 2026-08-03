@@ -1,13 +1,13 @@
 ---
 name: orchestrator
-description: Multi-agent worktree + OpenCode runtime orchestration CLI (orch). Use for merge queue, worktrees, runtime Server, agent lifecycle, takeover, topics, and cleanup in an orch-managed project.
+description: Multi-agent worktree + OpenCode runtime orchestration CLI (orch). Use for merge queue, worktrees, runtime Server, agent lifecycle, takeover, topics, remote promotion/release, and cleanup in an orch-managed project.
 ---
 
-# Orchestrator (v1.2 candidate)
+# Orchestrator (v1.3 candidate)
 
-Use `orch` for every managed Git write that affects the merge queue or `develop`, and for OpenCode Agent runtime control on this host. Target branch is always `develop`. Python stdlib only.
+Use `orch` for every managed Git write that affects the merge queue or `develop`, OpenCode Agent runtime control, and **remote branch promotion / release** on this host. Target integration branch is always `develop`. Python stdlib only.
 
-**Version:** keep `1.2.0-candidate` until `docs/v1.2-ready-checklist.md` release gates are signed.
+**Version:** keep `1.3.0-candidate` until `docs/v1.3-ready-checklist.md` release gates are signed.
 
 ## Merge queue workflow (v1.1 unchanged)
 
@@ -54,6 +54,30 @@ orch <project> topic-ready <topic_id> --commit <sha> [--command ...] --json
 orch <project> topic-open|list|show|archive ...
 ```
 
+## Remote promotion / release (v1.3)
+
+Fixed chain: `feature → local develop → origin/develop → develop→master PR → origin/master → release-sync → tag`.
+
+```text
+orch <project> remote-config --repository owner/name --provider github --json
+orch <project> remote-probe [--no-fetch] --json
+orch <project> remote-status [--no-fetch] --json
+orch <project> promote-develop --verification <id> [--execute] --json
+orch <project> promotion-list|show|reconcile|cancel ...
+orch <project> release-create --verification <id> [--execute] [--title ...] --json
+orch <project> release-status <promotion_id> --json
+orch <project> release-sync <promotion_id> [--execute] --json
+```
+
+Rules:
+
+1. Default dry-run; `--execute` writes remote.
+2. CAS push only (`expected_old_sha`/`new_sha`); never `--force`.
+3. Active `master_release` freezes `promote-develop --execute` and local `merge` (enqueue still allowed).
+4. Platform merge ≠ released; must `release-sync` until develop tip == merge commit.
+5. Credentials via env (`ORCH_GITHUB_TOKEN` or App PEM env); never in config/DB/argv.
+6. Hotfix/revert use the same promotion chain; break-glass is procedural only (not automated).
+
 ## CLI reference
 
 ### Host / project registry
@@ -83,6 +107,9 @@ orch <project> topic-open|list|show|archive ...
 | `agent-takeover\|release\|open` | single-writer lease |
 | `coordinator-bind\|show` | one active coordinator per project |
 | `topic-*` | product records; delete still via cleanup guards |
+| `remote-config\|probe\|status` | remote/provider config + read-only probe |
+| `promote-develop` / `promotion-*` | develop publish (CAS FF) |
+| `release-create\|status\|sync` | master Promotion PR + release-sync |
 
 Use `--json` for automation. Envelope: `schema_version`, `ok`, `command`, `data`, `error`.  
 `agent-watch --json` is **JSONL** (header/ticks/footer), not a single envelope.

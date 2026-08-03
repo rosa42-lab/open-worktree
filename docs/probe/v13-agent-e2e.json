@@ -1,0 +1,113 @@
+{
+  "ok": true,
+  "elapsed_sec": 62.2,
+  "repo": "rosa42-lab/open-worktree",
+  "tip": "e7635442599bf57cdba3cb4ee3193fd02d6cb793",
+  "promotion_id": "promo_5a42c2ffd7e04643ad0bc6f47e9f7aa5",
+  "pr": "4",
+  "steps": [
+    {
+      "step": "mint_tokens",
+      "ok": true
+    },
+    {
+      "step": "project_init",
+      "ok": true,
+      "path": "C:\\Users\\SUPERR~1\\AppData\\Local\\Temp\\orch-agent-e2e-5qcul55n"
+    },
+    {
+      "step": "catchup_master_into_develop",
+      "ok": true
+    },
+    {
+      "step": "remote-config",
+      "ok": true,
+      "data": {
+        "project": "v13agente2e",
+        "promotion": {
+          "remote": "origin",
+          "provider": "github",
+          "repository": "rosa42-lab/open-worktree",
+          "api_base_url": "https://api.github.com",
+          "integration_branch": "develop",
+          "stable_branch": "master",
+          "release_merge_method": "merge_commit",
+          "freeze_develop_during_release": true,
+          "freeze_local_merge_queue_during_release": true,
+          "required_checks": [
+            "test",
+            "build",
+            "promotion-policy"
+          ],
+          "required_approvals": 1
+        },
+        "capabilities_verified": false,
+        "note": "format validated only; run remote-probe for platform capabilities"
+      }
+    },
+    {
+      "step": "remote-probe",
+      "ok": true,
+      "overall": "misconfigured",
+      "write_paths_enabled": false
+    },
+    {
+      "step": "local_tip",
+      "ok": true,
+      "sha": "e7635442599bf57cdba3cb4ee3193fd02d6cb793"
+    },
+    {
+      "step": "verification",
+      "ok": true,
+      "id": "verify_90a1c53b497d4052"
+    },
+    {
+      "step": "promote-develop-dry",
+      "ok": true,
+      "payload": {
+        "ok_to_execute": true,
+        "error": null,
+        "error_kind": null
+      }
+    },
+    {
+      "step": "promote-develop-execute",
+      "ok": true,
+      "state": "succeeded",
+      "exit": 0,
+      "err": null
+    },
+    {
+      "step": "release-create",
+      "ok": true,
+      "promotion_id": "promo_5a42c2ffd7e04643ad0bc6f47e9f7aa5",
+      "pr": "4",
+      "url": "https://github.com/rosa42-lab/open-worktree/pull/4",
+      "state": "awaiting_checks",
+      "err": ""
+    },
+    {
+      "step": "gh-pr-merge",
+      "ok": true,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "step": "release-status",
+      "ok": true,
+      "state": "master_merged_pending_sync"
+    },
+    {
+      "step": "release-sync",
+      "ok": true,
+      "sync": "released",
+      "state": "released",
+      "err": "",
+      "detail": {
+        "errors": null,
+        "plan": null,
+        "merge_sha": "535cbd547a5847c45236240ffded30c3790f3950"
+      }
+    }
+  ]
+}
