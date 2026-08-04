@@ -1,0 +1,76 @@
+{
+  "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json",
+  "_comment": "Copy into ~/.config/opencode/oh-my-openagent.json and adjust models. No API keys here.",
+  "model": "minimax/MiniMax-M3",
+  "model_fallback": true,
+  "runtime_fallback": {
+    "enabled": true,
+    "retry_on_errors": [400, 429, 500, 502, 503, 504, 529, 2056],
+    "max_fallback_attempts": 3,
+    "cooldown_seconds": 0,
+    "timeout_seconds": 10,
+    "notify_on_fallback": true
+  },
+  "background_task": {
+    "timeoutMs": 600000,
+    "stallTimeoutMs": 300000,
+    "max_concurrent": 3
+  },
+  "goal": {
+    "enabled": true,
+    "auto_start": false,
+    "default_max_iterations": 100
+  },
+  "disabled_hooks": [
+    "comment-checker",
+    "auto-update-checker"
+  ],
+  "agents": {
+    "sisyphus": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    },
+    "hephaestus": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    },
+    "oracle": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    },
+    "librarian": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    },
+    "explore": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    },
+    "prometheus": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    },
+    "atlas": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    },
+    "sisyphus-junior": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    }
+  },
+  "categories": {
+    "quick": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    },
+    "deep": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    },
+    "ultrabrain": {
+      "model": "minimax/MiniMax-M3",
+      "fallback_models": [{ "model": "local-litellm/deepseek-v4-flash" }]
+    }
+  }
+}

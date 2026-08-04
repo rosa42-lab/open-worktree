@@ -134,6 +134,9 @@ Full guide: [`docs/opencode-multi-session.md`](docs/opencode-multi-session.md)
 | `docs/v1.2-crash-drills.md` | Crash / concurrency drills |
 | `docs/v1.2-ready-checklist.md` | v1.2 ready gate |
 | `docs/opencode-multi-session.md` | OpenCode + orch checklist |
+| `docs/omo-goal-quickstart.md` | oh-my-openagent `/goal` + orch worktree quickstart |
+| `docs/omo-goal-models.example.json` | Example `oh-my-openagent.json` models + goal (no secrets) |
+| `docs/prompts/worktree-goal-quality-dev.md` | Conductor paste prompt for high-quality multi-worktree dev |
 | `docs/prompts/bootstrap-worktree-agent.md` | Agent bootstrap prompt |
 | `docs/acceptance-results.md` | v1.1 §17 automation matrix |
 | `docs/ready-checklist.md` | v1.1 ready gate |
