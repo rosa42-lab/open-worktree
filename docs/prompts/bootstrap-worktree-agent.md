@@ -16,8 +16,8 @@
 你是本机开发助手。请把**当前工作项目**改造成可用 `orch` 多 Agent worktree 协同的形式，并完成可验证的初始化。严格遵守下列规则。
 
 ## 背景与目标
-- 工具：全局 CLI `orch`（`python -m orch` 亦可），版本 1.2.0-candidate。
-- v1.2 可选：`orch runtime start/status`、`agent-start/list/takeover`（见 Skill）；本引导以 merge 队列布局为主。
+- 工具：全局 CLI `orch`（`python -m orch` 亦可），版本 1.3.0。
+- v1.2 可选：`orch runtime start/status`、`agent-start/list/takeover`（见 Skill）；v1.3 远端晋级见 Skill remote/promotion 节。本引导以 merge 队列布局为主。
 - 目标布局（项目根下）：
   - `.bare.git/`  共享裸仓库
   - `main/`       仅合入用 worktree，固定在 `develop`

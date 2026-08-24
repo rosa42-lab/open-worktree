@@ -2,7 +2,7 @@
 
 > 用两个实际场景直观展示 orchestrator 插件与 `orch` CLI 如何协作。
 >
-> 适用版本：`1.2.0-candidate`
+> 适用版本：`1.3.0`（场景覆盖 v1.1 merge queue 与 v1.2 takeover；远端晋级见 `docs/remote-branch-promotion-design.md`）
 
 ## 1. 先理解插件的作用
 
