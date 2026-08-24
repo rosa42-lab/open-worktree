@@ -1,5 +1,7 @@
 # orch v1.2 分阶段开发任务
 
+> **历史任务清单。** 当前代码版本是 `1.3.0`。v1.2 runtime / topic 已落地；独立 D 门未签。接手请先读 `docs/current-architecture.md`。
+
 **源计划：** `docs/v1.2-upgrade-plan.md`  
 **目标版本：** `orch 1.2.0-candidate`  
 **阶段数：** 4  

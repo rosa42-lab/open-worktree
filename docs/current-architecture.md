@@ -2,7 +2,7 @@
 
 > 面向下一阶段开发的接手文档。本文描述当前代码已经实现的架构、核心工作流、关键约束、已知缺口和建议演进方向。
 >
-> 基线版本：`1.2.0-candidate`（代码状态截至 2026-08-01）
+> 基线版本：`1.3.0`（D 门签署于 2026-08-04；本文档对齐于 2026-08-24）
 
 ## 1. 系统定位
 
@@ -10,10 +10,18 @@
 
 1. `orch` CLI 负责接收命令并编排操作。
 2. Git bare repository 保存代码、分支和提交，是代码事实来源。
-3. 每项目 SQLite 数据库保存队列、状态机、审计和 Agent 运行记录。
+3. 每项目 SQLite 数据库保存队列、状态机、审计、Agent 运行记录、verification 与 promotion。
 4. OpenCode Server 与独立 worker 子进程负责 v1.2 Agent 会话执行。
+5. Remote Git adapter 与 Hosting provider（当前 GitHub）负责 v1.3 远端晋级与 release。
 
-系统的核心目标是让多个 Agent 在独立 worktree 中并行开发，同时只允许通过确定性队列串行修改 `develop`。
+系统的核心目标是让多个 Agent 在独立 worktree 中并行开发，只允许通过确定性队列串行修改 **local `develop`**，再经受保护的晋级链发布到 `origin/develop` 与 `origin/master`。
+
+固定晋级链：
+
+```text
+feature → local develop → origin/develop → develop→master Promotion PR
+        → origin/master → release-sync → release tag
+```
 
 ## 2. 总体架构
 
@@ -25,11 +33,14 @@ flowchart TB
     CLI --> Queue["Worktree 与合并队列"]
     CLI --> Runtime["Runtime 与 Agent 生命周期"]
     CLI --> Topic["Coordinator 与 Topic 产品层"]
+    CLI --> Promotion["远端晋级 / release"]
 
     Registry --> Config["~/.orchestrator/config.json"]
     Queue --> DB["项目 SQLite"]
     Runtime --> DB
     Topic --> DB
+    Promotion --> DB
+    Promotion --> Config
 
     Queue --> Bare[".bare.git"]
     Bare --> Main["main/: develop 专用合并 worktree"]
@@ -39,6 +50,11 @@ flowchart TB
     Runtime --> Worker["每个 run 一个 worker 子进程"]
     Worker --> Server
     Worker --> Worktrees
+
+    Promotion --> RemoteGit["RemoteGitAdapter"]
+    Promotion --> Provider["HostingProviderAdapter"]
+    RemoteGit --> Origin["origin refs"]
+    Provider --> GitHub["GitHub API"]
 ```
 
 代码按职责分布如下：
@@ -50,9 +66,12 @@ flowchart TB
 | `orch/git/` | Git 命令执行、ref 与 worktree 校验 |
 | `orch/merge/` | claim、merge、finalize、interrupt recovery |
 | `orch/runtime/` | OpenCode adapter、Server、worker、lease、takeover |
+| `orch/verification/` | commit-bound verification records；topic-ready 桥接 |
+| `orch/promotion/` | develop promote、master release、reconcile、freeze 守卫 |
+| `orch/remote/` | RemoteGit、GitHub/manual/gitlab provider、probe、auth |
 | `orch/state_machine.py` | 合并任务状态机 |
 | `orch/agent_state.py` | Agent run 生命周期状态机 |
-| `orch/migrations.py` | SQLite schema 和 v1 到 v2 迁移 |
+| `orch/migrations.py` | SQLite schema：v1 → v2 → v3 |
 | `tests/` | 单元、集成和 acceptance 测试 |
 
 ## 3. 项目与 Worktree 布局
@@ -68,20 +87,24 @@ flowchart TB
     `-- agentB-fix__bar/       # Agent B 开发目录
 ```
 
+`main/` → `integration/` 迁移已评估并**延后**，不阻塞 1.3.0。
+
 宿主级控制数据放在用户目录：
 
 ```text
 ~/.orchestrator/
-|-- config.json
+|-- config.json                # projects + promotion.<project>
 |-- config.json.lock
 |-- data/<project>/
-|   |-- orchestrator.db
+|   |-- orchestrator.db        # schema user_version=3
 |   `-- project.lock
 `-- runtime/
     |-- opencode.json
     |-- opencode.credentials.json
     `-- logs/
 ```
+
+凭证只来自环境变量或 App 安装 token（如 `ORCH_GITHUB_TOKEN`），禁止写入 config / DB / argv / remote URL。
 
 ### 3.1 初始化
 
@@ -162,6 +185,8 @@ Git 与 SQLite 无法组成真正的原子事务，因此实现使用三阶段�
 
 项目明确禁止在 SQLite 写事务中执行 Git，以避免长事务和锁级联。
 
+Active `master_release` 期间，claim 被 `release_freeze` 拒绝（仍可 `enqueue`）。这是 v1.3 双冻结的本地一侧。
+
 ### 4.5 冲突与不确定结果
 
 可确认的普通冲突会：
@@ -193,15 +218,15 @@ Git 与 SQLite 无法组成真正的原子事务，因此实现使用三阶段�
 
 | 锁 | 范围 |
 |---|---|
-| `config.json.lock` | 项目注册表写入 |
-| `<project>/project.lock` | 单项目 Git 与控制状态写操作 |
+| `config.json.lock` | 项目注册表写入、`remote-config` |
+| `<project>/project.lock` | 单项目 Git、merge、promotion execute、Agent 控制写 |
 | `runtime/opencode.lock` | OpenCode Server start/stop |
 
 锁文件包含 PID、hostname、command、时间和 nonce。强制破锁需要经过存活性和身份校验，不能直接删除锁文件。
 
 ### 5.2 SQLite
 
-每个项目使用独立 SQLite，当前 schema 版本为 2。连接配置包括：
+每个项目使用独立 SQLite，当前 schema 版本为 **3**。连接配置包括：
 
 - foreign keys；
 - WAL journal；
@@ -222,10 +247,14 @@ Git 与 SQLite 无法组成真正的原子事务，因此实现使用三阶段�
 | `inspection_forks` | 只读检查 Session fork |
 | `coordinator_sessions` | 每项目根协调 Session |
 | `topics` | 开发主题与 worktree/run 关联 |
+| `verification_records` | commit-bound 验证证据（topic / promote / release） |
+| `promotion_runs` | develop publish 与 master release 状态机 |
+| `promotion_events` | promotion 审计事件（含 release-sync） |
+| `promotion_tasks` | promotion 追溯到的本地 merge tasks |
 
-## 6. 两套独立状态机
+## 6. 三套独立状态机
 
-合并任务和 Agent 运行状态被有意拆开，因为“代码是否已经合并”和“Agent 是否仍在运行”是两个不同事实。
+合并任务、Agent 运行、远端晋级被有意拆开：代码是否已经合入 local develop、Agent 是否仍在运行、远端是否已经发布，是三个不同事实。
 
 ### 6.1 合并任务状态
 
@@ -247,6 +276,14 @@ Agent run 同时保存三类状态：
 - observed：`starting`、`running`、`idle`、`busy`、`stopping`、`exited`、`unreachable`。
 
 这种三维状态用于区分用户意图、生命周期阶段和外部观测事实，避免把一次网络不可达直接等同于进程已经退出。
+
+### 6.3 Promotion 状态
+
+`promotion_runs.kind` 为 `develop_publish` 或 `master_release`。当前仓库 mode 冻结为 **`direct_ff`**；`candidate_pr` 全路径 defer。
+
+闭集包括：`created`、`prechecking`、`ready`、`executing`、`awaiting_checks`、`awaiting_approval`、`ready_to_merge`、`published_pending_sync`、`master_merged_pending_sync`、`syncing`、`succeeded`、`released`、`blocked`、`reconciling`、`failed_safe_to_retry`、`manual_required`、`cancelled`。
+
+平台报告 master 已合并后不得直接标 `released`；必须完成 `release-sync` 且 remote develop == `release_merge_sha`。
 
 ## 7. Runtime 与 Agent 生命周期
 
@@ -335,19 +372,42 @@ Topic 位于 worktree、merge queue 和 Agent runtime 之上，用于表达一�
 - 每项目绑定一个 active coordinator Session；
 - 创建、列出、查看、打开和归档 Topic；
 - Topic 关联 branch、worktree、coordinator 和可选 active run；
-- `topic-ready` 校验调用方提供了 commands 和 commit SHA，并标记 `ready_for_enqueue`。
+- `topic-ready` 校验 commands 与 commit SHA，桥接为 `verification_records`，并标记 `ready_for_enqueue`。
 
 当前没有形成完整闭环：
 
 - `topic-start` 不自动创建 branch/worktree/session/worker；
 - `topic-ready` 不自动 enqueue；
 - 没有独立 `topic-enqueue` 命令；
-- verification 结果未作为独立记录完整持久化；
-- brief 仍通过较弱的 `plan_path` 标记保存。
+- brief 仍通过较弱的 `plan_path` 标记保存；
+- `topic_id`、`agent_run_id`、`task_id` 仍是较松散的可空关联。
 
-因此，当前 Topic 更接近“产品记录与导航层”，还不是端到端编排器。
+因此，当前 Topic 更接近“产品记录与导航层”，还不是端到端编排器。`topic-ready` 与 enqueue 的显式边界暂时保留，直到编排流程具备幂等和恢复语义。
 
-## 9. 清理策略
+## 9. 远端晋级与 release（v1.3）
+
+默认 dry-run；`--execute` 才写远端。origin/develop 写入必须带 `expected_old_sha` / `new_sha` 的 CAS fast-forward，禁止 `--force`。origin/master 不得由 orch 直接 push，只通过 `head=develop`、`base=master` 的 Promotion PR（merge commit）。
+
+### 9.1 主要命令
+
+| 命令 | 作用 |
+|---|---|
+| `remote-config` | 写入 promotion 配置（不含 secret、不宣称平台已满足） |
+| `remote-probe` | 只读：Git / 身份 / develop policy / master policy / provider |
+| `remote-status` | 四 SHA 与 ancestry：`in_sync` / `local_ahead` / `remote_ahead` / `diverged` / `unknown` |
+| `promote-develop` | CAS FF 发布 local develop → origin/develop |
+| `promotion-list/show/reconcile/cancel` | 观察、超时只读对账、合法取消 |
+| `release-create/status` | 创建 develop→master PR；不自动批准或合并 |
+| `release-sync` | 平台合并后把 merge commit 同步回 develop，完成后才 `released` |
+
+### 9.2 硬门槛与冻结
+
+- 无 `passed` 且未过期的 `verification_records` 时，promote / release fail-closed。
+- Active release 同时冻结新的 `promote-develop --execute` 与 local merge claim。
+- `sync_verified_merge` 仅经领域授权路径调用，不能替代 feature merge queue。
+- GitLab provider 仅为占位；manual provider 明确 `unsupported`。
+
+## 10. 清理策略
 
 `cleanup --prune` 只考虑已经 `merged` 且超过 24 小时 cooldown 的任务。实际删除前还必须通过：
 
@@ -368,7 +428,7 @@ Topic 位于 worktree、merge queue 和 Agent runtime 之上，用于表达一�
 
 Runtime guard 始终先于 Git 删除操作，hook 也不能绕过内建 guard。
 
-## 10. 安全边界
+## 11. 安全边界
 
 `orch` 是协调与防误操作工具，不是 OS 安全沙箱。
 
@@ -381,39 +441,43 @@ Runtime guard 始终先于 Git 删除操作，hook 也不能绕过内建 guard�
 
 因此不能把 orch 当成跨账号隔离或恶意代码防护边界。
 
-## 11. 当前成熟度
+## 12. 当前成熟度
 
-### 11.1 已形成闭环
+### 12.1 已形成闭环
 
 - 项目注册与初始化；
 - Agent worktree 创建；
 - 提交 SHA 冻结与确定性合并队列；
 - 冲突、重试、skip 和 evidence-based recovery；
 - 审计、文件锁和 SQLite 状态机；
-- runtime registry、worker、lease、takeover 与 cleanup guard。
+- runtime registry、worker、lease、takeover 与 cleanup guard；
+- `verification_records` 与 topic-ready 桥接；
+- `direct_ff` 下 promote-develop → release-create → 平台合并 → release-sync。
 
-其中 v1.1 worktree/merge queue 是当前最成熟、最适合继续作为稳定内核的部分。
+其中 v1.1 worktree/merge queue 仍是最成熟的内核。v1.3 远端晋级已签署 `1.3.0`。
 
-### 11.2 候选态能力
+### 12.2 版本与历史门禁
 
-当前版本仍为 `1.2.0-candidate`。正式发布前尚需完成：
+| 版本 | 代码 | 独立 D 门 |
+|---|---|---|
+| v1.1 merge queue | 已落地 | 未单独签署（被后续版本覆盖） |
+| v1.2 runtime / topic | 已落地 | 未签署：crash drills 与 Desktop H3/H4/H9 仍缺 |
+| v1.3 promotion / release | 已落地 | **已签署**（2026-08-04） |
 
-- 全量真实 OS 强杀演练；
-- Desktop takeover/release H3/H4/H9 复验签署；
-- 操作者发布确认和版本同步 bump。
+当前对外版本字符串是 `1.3.0`。v1.2 的未签项不再挡住 1.3，但仍是运行时质量债。
 
-### 11.3 已知实现缺口
+### 12.3 已知实现缺口
 
-1. Topic 到 worktree、worker、verification、enqueue 的端到端编排尚未闭环。
-2. Topic verification 缺少独立、可查询、关联 commit 的持久化模型。
-3. `task_id`、`agent_run_id`、`topic_id` 之间仍是较松散的可空关联。
-4. Runtime capability 假设没有作为 server generation 的强约束持续校验。
-5. 安装主要依赖脚本与 wrapper，尚无标准 `pyproject.toml` 打包。
-6. 项目名唯一，但同一路径可以被不同名称重复注册。
+1. Topic 到 worktree、worker、enqueue 的端到端编排尚未闭环。
+2. `task_id`、`agent_run_id`、`topic_id` 之间仍是较松散的可空关联。
+3. Runtime capability 假设没有作为 server generation 的强约束持续校验。
+4. 安装主要依赖脚本与 wrapper，尚无标准 `pyproject.toml` 打包。
+5. 项目名唯一，但同一路径可以被不同名称重复注册。
+6. `candidate_pr` 全路径 defer（mode=`direct_ff`）。
+7. GitLab provider 未实现。
+8. Solo `OrganizationAdmin` bypass 仍为临时债，团队化后必须移除。
 
-## 12. 下一阶段建议
-
-建议按以下顺序演进：
+## 13. 下一阶段建议
 
 ### P0：补齐 Topic 执行闭环
 
@@ -430,31 +494,7 @@ topic-start
 -> archive/cleanup
 ```
 
-每一步都应保存状态、输入、输出和失败证据，并支持幂等重试。
-
-### P0：持久化验证证据
-
-新增 `verification_records`，至少记录：
-
-- topic 和 commit SHA；
-- 命令及工作目录；
-- 开始与结束时间；
-- exit code；
-- stdout/stderr 摘要或证据文件路径；
-- 操作者；
-- 结果状态。
-
-`topic-ready` 应根据持久化证据判定，而不是只信任一次调用参数。
-
-远端分支晋级方案同样把 `verification_records` 视为 Phase 2/3 的硬前置：
-develop promotion 需要绑定最终聚合 `source_sha` 的验证记录，candidate PR
-还要记录实际 `published_sha` 的 post-verification；在这张表和查询契约
-落地前，远端 promotion 只能停留在能力探测/只读状态，不能进入自动 push
-或 master release。
-
-### P0：完成候选版发布门禁
-
-完成 crash drills 与 Desktop 接管复验。在这些真实环境假设被签署前，不应移除 `-candidate`。
+每一步都应保存状态、输入、输出和失败证据，并支持幂等重试。在该流程具备恢复语义之前，保持 `topic-ready` 与 enqueue 的显式边界。
 
 ### P1：收紧领域关联
 
@@ -483,9 +523,19 @@ Server 重启、升级或重新登记后，关键能力必须重新确认。
 - 整理模块依赖，避免 `cli.py` 和生命周期服务继续膨胀；
 - 为迁移、runtime adapter 和故障恢复建立更明确的兼容性策略。
 
-## 13. 开发时必须保持的架构不变量
+### 有意延期 / 不在下一刀
 
-1. `develop` 只能通过 orch 的 merge queue 修改。
+- `candidate_pr` 全路径；
+- `main/` → `integration/` 改名；
+- GitLab 完整 provider；
+- 自动 break-glass；
+- 将 `freeze_local_merge_queue_during_release` 改为 `false`。
+
+可选加固（不挡 1.3.0）：补跑 v1.2 crash drills 与 Desktop H3/H4/H9。
+
+## 14. 开发时必须保持的架构不变量
+
+1. local `develop` 只能通过 orch 的 merge queue 或受锁的 `release-sync` / candidate-sync 修改，不得手改 `main/`。
 2. `main/` 只用于合并，不用于日常开发或 Agent worker。
 3. 入队任务必须冻结明确的 `source_commit`。
 4. Git 命令不得运行在 SQLite 写事务内部。
@@ -495,14 +545,23 @@ Server 重启、升级或重新登记后，关键能力必须重新确认。
 8. cleanup 必须先通过 runtime guard，再进行任何 Git 删除。
 9. external 或身份不明的 Server/进程不得由 orch 终止。
 10. `topic-ready` 与 enqueue/merge 保持显式边界，直到新的应用流程具备完整幂等和恢复语义。
+11. origin/develop 只允许带旧/新 SHA 的非强制 CAS；禁止 `--force` / `--force-with-lease`。
+12. origin/master 不得由 orch 直接 push；只经 Promotion PR 的 merge commit。
+13. 无 `passed` 且未过期的 verification 时，promote / release 必须 fail-closed。
+14. 平台 merged 后必须 `release-sync` 才能标 `released` 并解冻。
+15. secret 不得进入 argv、SQLite、audit、JSON、异常或 remote URL。
 
-## 14. 进一步阅读
+## 15. 进一步阅读
 
 - `README.md`：安装、命令和快速使用。
-- `docs/usage-scenarios.md`：两个端到端场景，直观展示 worktree 合并队列和人工接管流程。
-- `docs/remote-branch-promotion-design.md`：本地 develop、线上 develop 与稳定 master 的受保护晋级设计。
-- `docs/v1.2-upgrade-plan.md`：v1.2 原始设计与架构决策。
-- `docs/tasks.md`：阶段任务与实现记录。
-- `docs/v1.2-acceptance-results.md`：自动化和真实环境验收状态。
-- `docs/v1.2-crash-drills.md`：故障演练清单。
-- `docs/v1.2-ready-checklist.md`：正式发布门禁。
+- `docs/usage-scenarios.md`：worktree 合并队列和人工接管场景。
+- `docs/remote-branch-promotion-design.md`：远端晋级设计。
+- `docs/v1.3-tasks.md` / `docs/v1.3-tasks-009-012.md`：v1.3 任务与完成记录。
+- `docs/v1.3-acceptance-results.md`：v1.3 验收矩阵。
+- `docs/v1.3-ready-checklist.md`：v1.3 发布门禁（已签）。
+- `docs/omo-goal-quickstart.md`：oh-my-openagent `/goal` + orch worktree。
+- `docs/v1.2-upgrade-plan.md`：v1.2 原始设计（历史）。
+- `docs/tasks.md`：v1.2 任务跟踪（历史）。
+- `docs/v1.2-acceptance-results.md` / `docs/v1.2-ready-checklist.md`：v1.2 历史门禁。
+- `docs/acceptance-results.md` / `docs/ready-checklist.md`：v1.1 历史门禁。
+- `task.md`：v1.1 实施任务清单（历史）。

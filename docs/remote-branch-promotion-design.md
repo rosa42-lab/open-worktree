@@ -1,8 +1,8 @@
 # 远端核心分支晋级与保护设计
 
-> 状态：In implementation（以 `docs/v1.3-tasks.md` 阶段退出与完成记录为准）
+> 状态：Implemented as `1.3.0`（2026-08-04 D 门已签；mode=`direct_ff`；`candidate_pr` 全路径 defer）
 >
-> 目标版本：orch v1.3（建议）
+> 目标版本：orch v1.3
 >
 > 基线：`1.2.0-candidate`
 >
