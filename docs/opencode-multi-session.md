@@ -1,6 +1,6 @@
 # OpenCode + orch 多 Session 协同（上手清单）
 
-版本：`orch 1.2.0-candidate`  
+版本：`orch 1.3.0`  
 假设：已在本机跑过集成安装（见下方「一次性安装」）。
 
 ---
@@ -32,7 +32,7 @@ python scripts\install_skill.py
 
 ```powershell
 orch --version
-# orch 1.2.0-candidate
+# orch 1.3.0
 
 # 任意目录
 cd $env:TEMP
