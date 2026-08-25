@@ -7,8 +7,8 @@ import tempfile
 from pathlib import Path
 
 
-def run(cmd: list[str], cwd: Path | None = None) -> None:
-    subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
+def run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
 
 
 def make_bare_with_develop(root: Path | None = None) -> Path:
@@ -39,3 +39,11 @@ def make_bare_with_develop(root: Path | None = None) -> Path:
     # ensure develop ref exists
     run(["git", "--git-dir", str(bare), "show-ref", "--verify", "refs/heads/develop"])
     return root
+
+
+def commit_file(worktree: Path, filename: str, content: str, message: str | None = None) -> str:
+    """Write, commit, and return HEAD SHA in an existing worktree."""
+    (worktree / filename).write_text(content, encoding="utf-8")
+    run(["git", "add", filename], cwd=worktree)
+    run(["git", "commit", "-m", message or f"add {filename}"], cwd=worktree)
+    return run(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()

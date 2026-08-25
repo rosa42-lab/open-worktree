@@ -15,14 +15,14 @@ Use `orch` for every managed Git write that affects the merge queue or `develop`
 2. Inspect with `diff` / `changes` / `log`
 3. `orch <project> worktree-add <agent> <branch>`
 4. Develop and commit only in your worktree (never in `main/`)
-5. `orch <project> enqueue <agent> <branch> <worktree_path> --priority <N>`
+5. `orch <project> enqueue <agent> <branch> <worktree_path> --priority <N>` — v1.1 path only. If that branch or worktree belongs to a live Topic (`proposed|active|ready|enqueued`), this is **refused** with `error.kind = topic_enqueue_required`; use `topic-enqueue <topic_id>` instead. After `skip` the Topic becomes `rejected` and plain `enqueue` is allowed again.
 6. Coordinator: `orch <project> merge` or `merge --once`
 
 ### Conflict / recovery
 
-- `conflict`: resolve in the **source worktree**, then `retry <task_id>` (DB only; no Git from orch).
-- Abandon: `skip <task_id> --reason <text>` after `main/` is clean.
-- `recovery_required`: `lock-status` + `reset-stuck`; do not treat as normal conflict.
+- `conflict`: resolve in the **source worktree**, then `retry <task_id>` (DB only; no Git from orch). For a Topic, get `<task_id>` from `topic-show <topic_id> --json` (`data.topic.task_id`). The Topic stays `enqueued`; `retry` is the only command that may change `source_commit`.
+- Abandon a queue task: `skip <task_id> --reason <text>` after `main/` is clean (Topic → `rejected`, `task_id` cleared).
+- `recovery_required`: `lock-status` + `reset-stuck`; do not treat as normal conflict. `reset-stuck` recover-as-merged also writes the Topic to `merged`.
 
 ## Runtime + Agent workflow (v1.2)
 
@@ -48,11 +48,24 @@ orch runtime stop --json   # refuses if active runs (unless --force)
 
 ```text
 orch <project> coordinator-bind --session <ses> --directory <path> [--replace] --json
-orch <project> topic-start <name> --title ... --goal ... --branch ... --worktree ... --json
+orch <project> topic-start <name> --title ... --goal ... --branch ... --agent <agent> --json
+# ALWAYS pass --agent so topic-enqueue can run. Omitting it leaves agent_name NULL
+# (topic_agent_required). Re-run the same topic-start with --agent to backfill.
+# --agent does NOT start an OpenCode session. Add --start-session only when a
+# runtime Server is registered; otherwise the Topic stays proposed (never active).
+# --worktree is deprecated; dest is worktrees/<agent>-<safe-branch>. Never annotates an existing path.
 orch <project> topic-ready <topic_id> --commit <sha> [--command ...] --json
-# topic-ready does NOT enqueue; use enqueue after verification
+# topic-ready does NOT enqueue or merge. Git evidence required; fake SHA is rejected.
+# After enqueue, topic-ready is frozen while the task is pending|merging (topic_sha_frozen).
+# conflict / recovery_required allow a new-SHA topic-ready in the same worktree.
+orch <project> topic-enqueue <topic_id> [--priority N] --json
+# feeds the existing merge queue; source_commit MUST equal the verification SHA. Does not merge.
+orch <project> topic-abandon <topic_id> --json
+# proposed|active|ready → cancelled. Not reversible via topic-ready (topic_ready_illegal).
 orch <project> topic-open|list|show|archive ...
 ```
+
+**`merged` means local `develop` only.** A Topic reaching `lifecycle_state = merged` proves the merge queue landed its frozen `source_commit` on the **local** `develop` branch. It is not pushed, published, deployed, or released. Publishing is `promote-develop`; releasing is `release-create` → platform merge → `release-sync`. `ready` ≠ `enqueued` ≠ `merged` ≠ deployed.
 
 ## Remote promotion / release (v1.3)
 
@@ -92,7 +105,7 @@ Rules:
 
 | Command | Lock |
 |---|---|
-| `init`, `worktree-add`, `enqueue`, `merge`, `retry`, `skip`, `reset-stuck` | project lock |
+| `init`, `worktree-add`, `enqueue`, `merge`, `retry`, `skip`, `reset-stuck`, `topic-start`, `topic-ready`, `topic-enqueue`, `topic-abandon`, `topic-archive`, `coordinator-bind` | project lock |
 | `list`, `pending`, `diff`, `changes`, `log`, `lock-status` | no |
 | `cleanup [--prune]` | yes when pruning |
 | `lock-break --force` | guarded break |
@@ -106,7 +119,8 @@ Rules:
 | `agent-start\|stop\|reconcile\|archive` | lifecycle owner |
 | `agent-takeover\|release\|open` | single-writer lease |
 | `coordinator-bind\|show` | one active coordinator per project |
-| `topic-*` | product records; delete still via cleanup guards |
+| `topic-start|ready|enqueue|abandon|archive` | project lock; `topic-start` provisions a real branch + worktree. `--agent` does not start a session unless `--start-session` |
+| `topic-list|show|open` | read-only; no project lock |
 | `remote-config\|probe\|status` | remote/provider config + read-only probe |
 | `promote-develop` / `promotion-*` | develop publish (CAS FF) |
 | `release-create\|status\|sync` | master Promotion PR + release-sync |

@@ -21,6 +21,69 @@ from orch.registry import get_project_path
 from orch.validate import branch_safe_name, validate_agent_name, validate_project_name
 
 
+def worktree_dest(root: Path, agent: str, branch: str) -> Path:
+    return root / WORKTREES_DIR_NAME / f"{agent}-{branch_safe_name(branch)}"
+
+
+def worktree_add_unlocked(
+    project: str,
+    agent: str,
+    branch: str,
+    *,
+    base: str = TARGET_BRANCH,
+    dest: Path | None = None,
+    base_sha: str | None = None,
+) -> dict[str, Any]:
+    """Create worktree. Caller must already hold project.lock. Git is never in a SQLite txn."""
+    root = get_project_path(project)
+    bare = root / BARE_DIR_NAME
+    dest = dest if dest is not None else worktree_dest(root, agent, branch)
+    if dest.exists():
+        raise ValidationError(
+            f"worktree path already exists: {dest}",
+            kind="worktree_exists",
+            details={"path": str(dest)},
+        )
+    (root / WORKTREES_DIR_NAME).mkdir(parents=True, exist_ok=True)
+
+    pin = base_sha or run_git_ref(
+        ["rev-parse", "--verify", base], bare, check=True
+    ).stdout.strip()
+
+    exists = run_git_ref(["rev-parse", "--verify", f"refs/heads/{branch}"], bare)
+    if exists.ok:
+        for entry in worktree_list_porcelain(bare):
+            b = entry.get("branch", "")
+            if b.endswith(f"/{branch}") or b == f"refs/heads/{branch}":
+                raise ValidationError(
+                    f"branch {branch} already checked out in another worktree",
+                    kind="branch_checked_out",
+                    details={"worktree": entry.get("worktree"), "branch": branch},
+                )
+        r = run_git_ref(["worktree", "add", str(dest), branch], bare)
+    else:
+        r = run_git_ref(
+            ["worktree", "add", "-b", branch, str(dest), pin],
+            bare,
+        )
+    if not r.ok:
+        raise OrchError(
+            f"worktree add failed: {r.stderr.strip()}",
+            code=ExitCode.GIT,
+            kind="git_failure",
+            details={"stderr": r.stderr, "stdout": r.stdout},
+        )
+    return {
+        "project": project,
+        "agent": agent,
+        "branch": branch,
+        "worktree_path": str(dest.resolve()),
+        "base": base,
+        "base_sha": pin,
+        "created_branch": not exists.ok,
+    }
+
+
 def cmd_worktree_add(
     project: str,
     agent: str,
@@ -37,17 +100,6 @@ def cmd_worktree_add(
             details={"base": base},
         )
 
-    root = get_project_path(project)
-    bare = root / BARE_DIR_NAME
-    safe = branch_safe_name(branch)
-    dest = root / WORKTREES_DIR_NAME / f"{agent}-{safe}"
-    if dest.exists():
-        raise ValidationError(
-            f"worktree path already exists: {dest}",
-            kind="worktree_exists",
-            details={"path": str(dest)},
-        )
-
     conn = open_project_db(project, init=True)
     handle = None
     try:
@@ -57,43 +109,7 @@ def cmd_worktree_add(
             project=project,
             audit_conn=conn,
         )
-        (root / WORKTREES_DIR_NAME).mkdir(parents=True, exist_ok=True)
-
-        exists = run_git_ref(["rev-parse", "--verify", f"refs/heads/{branch}"], bare)
-        if exists.ok:
-            # branch already checked out elsewhere?
-            for entry in worktree_list_porcelain(bare):
-                b = entry.get("branch", "")
-                if b.endswith(f"/{branch}") or b == f"refs/heads/{branch}":
-                    raise ValidationError(
-                        f"branch {branch} already checked out in another worktree",
-                        kind="branch_checked_out",
-                        details={"worktree": entry.get("worktree"), "branch": branch},
-                    )
-            r = run_git_ref(
-                ["worktree", "add", str(dest), branch],
-                bare,
-            )
-        else:
-            r = run_git_ref(
-                ["worktree", "add", "-b", branch, str(dest), base],
-                bare,
-            )
-        if not r.ok:
-            raise OrchError(
-                f"worktree add failed: {r.stderr.strip()}",
-                code=ExitCode.GIT,
-                kind="git_failure",
-                details={"stderr": r.stderr, "stdout": r.stdout},
-            )
-        return {
-            "project": project,
-            "agent": agent,
-            "branch": branch,
-            "worktree_path": str(dest.resolve()),
-            "base": base,
-            "created_branch": not exists.ok,
-        }
+        return worktree_add_unlocked(project, agent, branch, base=base)
     finally:
         if handle is not None:
             release(handle, audit_conn=conn)

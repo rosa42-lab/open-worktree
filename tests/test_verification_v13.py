@@ -34,13 +34,17 @@ class VerificationServiceTests(OrchEnvTestCase):
             title="Auth",
             goal="ship auth",
             branch_name="topic/auth",
-            worktree_path=str(self.env.proj / "worktrees" / "auth"),
+            agent_name="coder",
+            provision_session=False,
         )
         tid = started["topic"]["id"]
+        from tests.helpers.git_fixture import commit_file
+        from pathlib import Path as _Path
+        sha = commit_file(_Path(started["topic"]["worktree_path"]), "topic.txt", "topic work\n")
         ready = topic_ready(
             self.project,
             tid,
-            verification={"commit_sha": "abc123", "commands": ["pytest", "ruff"]},
+            verification={"commit_sha": sha, "commands": ["pytest", "ruff"]},
         )
         self.assertIn("verification_record_id", ready)
         rid = ready["verification_record_id"]
@@ -52,13 +56,13 @@ class VerificationServiceTests(OrchEnvTestCase):
             self.assertIsNotNone(rec)
             assert rec is not None
             self.assertEqual(rec["scope"], "topic")
-            self.assertEqual(rec["commit_sha"], "abc123")
+            self.assertEqual(rec["commit_sha"], sha)
             self.assertEqual(rec["status"], "passed")
             self.assertEqual(rec["commands"], ["pytest", "ruff"])
             gate = require_passed_verification(
                 conn,
                 self.project,
-                "abc123",
+                sha,
                 scope="topic",
                 required_commands=["pytest"],
             )

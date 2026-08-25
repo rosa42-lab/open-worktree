@@ -69,6 +69,8 @@ PROJECT_COMMANDS = frozenset(
         "topic-show",
         "topic-open",
         "topic-ready",
+        "topic-enqueue",
+        "topic-abandon",
         "topic-archive",
         "remote-config",
         "remote-probe",
@@ -279,12 +281,22 @@ def _parser_for_project(project: str) -> argparse.ArgumentParser:
     cb.add_argument("--replace", action="store_true")
     add("coordinator-show", "show active coordinator binding")
 
-    ts = add("topic-start", "create a persistent topic under coordinator")
+    ts = add("topic-start", "provision isolated topic branch+worktree under coordinator")
     ts.add_argument("name")
     ts.add_argument("--title", required=True)
     ts.add_argument("--goal", required=True)
     ts.add_argument("--branch", required=True)
-    ts.add_argument("--worktree", required=True)
+    ts.add_argument("--agent", default=None)
+    ts.add_argument(
+        "--start-session",
+        action="store_true",
+        help="provision an OpenCode session/worker (requires --agent and a registered runtime)",
+    )
+    ts.add_argument(
+        "--worktree",
+        default=None,
+        help="deprecated; path is computed as worktrees/<agent>-<safe-branch>",
+    )
 
     tl = add("topic-list", "list topics")
     tl.add_argument("--all", action="store_true")
@@ -298,6 +310,11 @@ def _parser_for_project(project: str) -> argparse.ArgumentParser:
     tr.add_argument("topic_id")
     tr.add_argument("--commit", required=True, help="verification commit SHA")
     tr.add_argument("--command", action="append", default=[], help="verification command")
+    te = add("topic-enqueue", "enqueue a ready topic (does not merge)")
+    te.add_argument("topic_id")
+    te.add_argument("--priority", type=int, default=1)
+    tab = add("topic-abandon", "cancel a proposed/active/ready topic")
+    tab.add_argument("topic_id")
     ta = add("topic-archive", "archive topic product record")
     ta.add_argument("topic_id")
 
@@ -637,7 +654,9 @@ def _dispatch(args: argparse.Namespace, *, project: str | None) -> tuple[str, An
             title=args.title,
             goal=args.goal,
             branch_name=args.branch,
-            worktree_path=args.worktree,
+            worktree_path=getattr(args, "worktree", None),
+            agent_name=getattr(args, "agent", None),
+            provision_session=bool(getattr(args, "start_session", False)),
         )
     if cmd == "topic-list":
         from orch.commands.topic import topic_list
@@ -667,6 +686,16 @@ def _dispatch(args: argparse.Namespace, *, project: str | None) -> tuple[str, An
                 "commands": list(getattr(args, "command", []) or []),
             },
         )
+    if cmd == "topic-enqueue":
+        from orch.commands.topic import topic_enqueue
+
+        return name, topic_enqueue(
+            project, args.topic_id, priority=int(getattr(args, "priority", 1))
+        )
+    if cmd == "topic-abandon":
+        from orch.commands.topic import topic_abandon
+
+        return name, topic_abandon(project, args.topic_id)
     if cmd == "topic-archive":
         from orch.commands.topic import topic_archive
 

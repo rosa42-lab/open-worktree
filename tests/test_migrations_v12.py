@@ -215,8 +215,8 @@ class MigrationTests(unittest.TestCase):
             db = Path(td) / "t.db"
             conn = connect(db)
             init_schema(conn)
-            # ensure_schema 现指向 schema 3（含 verification_records）
-            self.assertEqual(user_version(conn), 3)
+            # ensure_schema now targets schema 4 (topic closed-loop columns)
+            self.assertEqual(user_version(conn), 4)
             init_schema(conn)  # noop
             self.assertTrue(is_v2_complete(conn))
             conn.close()

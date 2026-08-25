@@ -10,12 +10,32 @@ from typing import Any
 from orch.audit import write_audit
 from orch.constants import BARE_DIR_NAME, MAIN_WORKTREE_NAME, TARGET_BRANCH
 from orch.db import immediate_transaction
+from orch.errors import ValidationError
 from orch.git.ref import run_git_ref
 from orch.git.worktree import run_git_worktree
 from orch.merge.do import capture_conflict_files, is_merge_conflict
 from orch.git._runner import GitResult
 from orch.state_machine import assert_transition
 from orch.util import utc_now_iso
+
+
+def writeback_topic_merged(
+    conn: sqlite3.Connection, task_id: str, finished: str
+) -> None:
+    cur = conn.execute(
+        """
+        UPDATE topics
+        SET lifecycle_state = 'merged', last_step = 'merge', updated_at = ?
+        WHERE task_id = ? AND lifecycle_state = 'enqueued'
+        """,
+        (finished, task_id),
+    )
+    if cur.rowcount not in (0, 1):
+        raise ValidationError(
+            "topic merge writeback affected unexpected rows",
+            kind="topic_merge_writeback_failed",
+            details={"rowcount": cur.rowcount, "task_id": task_id},
+        )
 
 
 def post_check_success(root: Path, bare: Path, source_commit: str) -> tuple[bool, str]:
@@ -70,6 +90,7 @@ def finalize_success(
             task_id=task["id"],
             detail={"merged_commit": head},
         )
+        writeback_topic_merged(c, task["id"], finished)
     return {"status": "merged", "merged_commit": head, "task_id": task["id"]}
 
 

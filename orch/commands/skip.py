@@ -79,6 +79,15 @@ def cmd_skip(project: str, task_id: str, *, reason: str = "") -> dict[str, Any]:
                 task_id=task["id"],
                 detail={"reason": reason},
             )
+            c.execute(
+                """
+                UPDATE topics
+                SET lifecycle_state = 'rejected', result_state = 'rejected',
+                    last_step = 'skip', task_id = NULL, updated_at = ?
+                WHERE task_id = ? AND lifecycle_state = 'enqueued'
+                """,
+                (finished, task["id"]),
+            )
         return {"task_id": task["id"], "status": "skipped", "reason": reason}
     finally:
         if handle is not None:

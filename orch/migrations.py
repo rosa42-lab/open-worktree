@@ -1,4 +1,4 @@
-"""Schema migration framework (v1.1 -> schema 2 -> schema 3). V12-002 / V13-005."""
+"""Schema migration framework (v1.1 -> schema 2 -> schema 3 -> schema 4). V12-002 / V13-005 / V14-001."""
 
 from __future__ import annotations
 
@@ -7,9 +7,10 @@ from typing import Any
 
 from orch.errors import DbError, ExitCode, OrchError
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SCHEMA_V2 = 2
 SCHEMA_V3 = 3
+SCHEMA_V4 = 4
 
 # ---------------------------------------------------------------------------
 # v1.1 shape (user_version=0, exact tables/columns/indexes)
@@ -429,6 +430,26 @@ V3_VERIFICATION_COLUMNS = frozenset(
     }
 )
 
+V4_TOPIC_COLUMNS = frozenset(
+    {
+        "agent_name",
+        "task_id",
+        "last_step",
+        "last_error",
+        "base_commit",
+        "verification_record_id",
+    }
+)
+
+V4_AGENT_RUN_COLUMNS = frozenset({"topic_id"})
+
+V4_REQUIRED_INDEXES = frozenset(
+    {
+        "idx_agent_runs_active_topic",
+        "idx_topics_active_task",
+    }
+)
+
 
 class SchemaAmbiguousError(OrchError):
     def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
@@ -537,7 +558,7 @@ def is_v2_complete(conn: sqlite3.Connection) -> bool:
 
 
 def is_v3_complete(conn: sqlite3.Connection) -> bool:
-    if user_version(conn) != SCHEMA_V3:
+    if user_version(conn) < SCHEMA_V3:
         return False
     if not is_v2_complete(conn):
         return False
@@ -551,6 +572,23 @@ def is_v3_complete(conn: sqlite3.Connection) -> bool:
         return False
     indexes = _index_names(conn)
     if not V3_REQUIRED_INDEXES.issubset(indexes):
+        return False
+    return True
+
+
+def is_v4_complete(conn: sqlite3.Connection) -> bool:
+    if user_version(conn) < SCHEMA_V4:
+        return False
+    if not is_v3_complete(conn):
+        return False
+    tables = _table_names(conn)
+    if "topics" not in tables or "agent_runs" not in tables:
+        return False
+    if not V4_TOPIC_COLUMNS.issubset(_columns(conn, "topics")):
+        return False
+    if not V4_AGENT_RUN_COLUMNS.issubset(_columns(conn, "agent_runs")):
+        return False
+    if not V4_REQUIRED_INDEXES.issubset(_index_names(conn)):
         return False
     return True
 
@@ -571,7 +609,7 @@ def _is_v3_partial_repairable(conn: sqlite3.Connection) -> bool:
 
 def classify_db(conn: sqlite3.Connection) -> str:
     """
-    Return one of: empty | v1 | v2 | v3 | unsupported | ambiguous
+    Return one of: empty | v1 | v2 | v3 | v4 | unsupported | ambiguous
     """
     ver = user_version(conn)
     tables = _table_names(conn)
@@ -579,6 +617,8 @@ def classify_db(conn: sqlite3.Connection) -> str:
         return "empty"
     if ver > SCHEMA_VERSION:
         return "unsupported"
+    if ver == SCHEMA_V4:
+        return "v4" if is_v4_complete(conn) else "ambiguous"
     if ver == SCHEMA_V3:
         return "v3" if is_v3_complete(conn) else "ambiguous"
     if ver == SCHEMA_V2:
@@ -642,6 +682,46 @@ def _init_empty_v3(conn: sqlite3.Connection) -> None:
     set_user_version(conn, SCHEMA_V3)
 
 
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, ddl: str) -> None:
+    name = ddl.split()[0]
+    if name not in _columns(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
+def _apply_v4_objects(conn: sqlite3.Connection) -> None:
+    _add_column_if_missing(conn, "topics", "agent_name TEXT")
+    _add_column_if_missing(conn, "topics", "base_commit TEXT")
+    _add_column_if_missing(conn, "topics", "task_id TEXT")
+    _add_column_if_missing(conn, "topics", "verification_record_id TEXT")
+    _add_column_if_missing(conn, "topics", "last_step TEXT")
+    _add_column_if_missing(conn, "topics", "last_error TEXT")
+    _add_column_if_missing(conn, "agent_runs", "topic_id TEXT")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_active_topic
+          ON agent_runs(topic_id)
+          WHERE topic_id IS NOT NULL
+            AND state NOT IN ('exited', 'archived')
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_topics_active_task
+          ON topics(task_id)
+          WHERE task_id IS NOT NULL
+            AND lifecycle_state = 'enqueued'
+        """
+    )
+
+
+def _init_empty_v4(conn: sqlite3.Connection) -> None:
+    _exec_script(conn, SCHEMA_V1_SQL)
+    _exec_script(conn, SCHEMA_V2_ADDITIVE_SQL)
+    _exec_script(conn, SCHEMA_V3_ADDITIVE_SQL)
+    _apply_v4_objects(conn)
+    set_user_version(conn, SCHEMA_V4)
+
+
 def migrate_to_v2(conn: sqlite3.Connection) -> dict[str, Any]:
     """
     Idempotent migration to schema 2 inside a short BEGIN IMMEDIATE.
@@ -649,7 +729,7 @@ def migrate_to_v2(conn: sqlite3.Connection) -> dict[str, Any]:
     On failure rolls back; never leaves partial schema committed.
     """
     kind = classify_db(conn)
-    if kind in ("v2", "v3"):
+    if kind in ("v2", "v3", "v4"):
         # already at or past v2
         return {"from": user_version(conn), "to": SCHEMA_V2, "action": "noop"}
     if kind == "unsupported":
@@ -733,8 +813,8 @@ def migrate_to_v3(conn: sqlite3.Connection) -> dict[str, Any]:
     V13-005 仅 verification 的 partial v3 -> 补齐 promotion_*。
     """
     kind = classify_db(conn)
-    if kind == "v3":
-        return {"from": SCHEMA_V3, "to": SCHEMA_V3, "action": "noop"}
+    if kind in ("v3", "v4"):
+        return {"from": user_version(conn), "to": SCHEMA_V3, "action": "noop"}
     if kind == "unsupported":
         raise SchemaVersionError(
             f"database user_version={user_version(conn)} is newer than supported "
@@ -840,6 +920,106 @@ def migrate_to_v3(conn: sqlite3.Connection) -> dict[str, Any]:
         raise
 
 
+def migrate_to_v4(conn: sqlite3.Connection) -> dict[str, Any]:
+    """
+    Idempotent migration to schema 4 (topic closed-loop columns).
+    empty/v1/v2/v3 -> v4；完整 v4 -> noop。不 ALTER tasks，不建 topic_events。
+    """
+    kind = classify_db(conn)
+    if kind == "v4":
+        return {"from": SCHEMA_V4, "to": SCHEMA_V4, "action": "noop"}
+    if kind == "unsupported":
+        raise SchemaVersionError(
+            f"database user_version={user_version(conn)} is newer than supported "
+            f"{SCHEMA_VERSION}",
+            details={"user_version": user_version(conn)},
+        )
+    if kind == "ambiguous":
+        if _is_v3_partial_repairable(conn):
+            migrate_to_v3(conn)
+            kind = classify_db(conn)
+        else:
+            raise SchemaAmbiguousError(
+                "database schema is ambiguous or incomplete; refusing to migrate",
+                details={
+                    "user_version": user_version(conn),
+                    "tables": sorted(_table_names(conn)),
+                },
+            )
+
+    snapshot: dict[str, list[tuple[Any, ...]]] | None = None
+    if kind in ("v1", "v2", "v3"):
+        snapshot = {
+            "tasks": [
+                tuple(r) for r in conn.execute("SELECT * FROM tasks").fetchall()
+            ],
+            "audit_log": [
+                tuple(r) for r in conn.execute("SELECT * FROM audit_log").fetchall()
+            ],
+            "counters": [
+                tuple(r) for r in conn.execute("SELECT * FROM counters").fetchall()
+            ],
+        }
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.Error as exc:
+        raise DbError(
+            f"BEGIN IMMEDIATE failed: {exc}",
+            details={"error": str(exc)},
+        ) from exc
+
+    try:
+        if kind == "empty":
+            _init_empty_v4(conn)
+            action = "init"
+            from_ver = 0
+        elif kind == "v1":
+            _apply_v2_objects(conn)
+            _apply_v3_objects(conn)
+            _apply_v4_objects(conn)
+            set_user_version(conn, SCHEMA_V4)
+            action = "migrate"
+            from_ver = 1
+        elif kind == "v2":
+            _apply_v3_objects(conn)
+            _apply_v4_objects(conn)
+            set_user_version(conn, SCHEMA_V4)
+            action = "migrate"
+            from_ver = 2
+        elif kind == "v3":
+            _apply_v4_objects(conn)
+            set_user_version(conn, SCHEMA_V4)
+            action = "migrate"
+            from_ver = 3
+        else:
+            raise SchemaAmbiguousError(f"unexpected classify result: {kind}")
+
+        if not is_v4_complete(conn):
+            raise DbError(
+                "schema 4 self-check failed after migration",
+                details={"tables": sorted(_table_names(conn))},
+            )
+
+        if snapshot is not None:
+            for table, rows in snapshot.items():
+                now = [tuple(r) for r in conn.execute(f"SELECT * FROM {table}").fetchall()]
+                if now != rows:
+                    raise DbError(
+                        f"migration altered existing {table} rows",
+                        details={"table": table},
+                    )
+
+        conn.commit()
+        return {"from": from_ver, "to": SCHEMA_V4, "action": action}
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+
+
 def ensure_schema(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Ensure DB is at schema 3. Safe to call repeatedly."""
-    return migrate_to_v3(conn)
+    """Ensure DB is at schema 4. Safe to call repeatedly."""
+    return migrate_to_v4(conn)

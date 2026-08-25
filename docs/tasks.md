@@ -1,6 +1,8 @@
 # orch v1.2 分阶段开发任务
 
 > **历史任务清单。** 当前代码版本是 `1.3.0`。v1.2 runtime / topic 已落地；独立 D 门未签。接手请先读 `docs/current-architecture.md`。
+>
+> Topic 执行闭环见 [`docs/topic-closed-loop-tasks.md`](topic-closed-loop-tasks.md)（V14）与整改 [`docs/topic-closed-loop-v15-tasks.md`](topic-closed-loop-v15-tasks.md)（V15：CLI 产品路径、SHA 绑定、recover 回写）。V12-015 只覆盖记录层。
 
 **源计划：** `docs/v1.2-upgrade-plan.md`  
 **目标版本：** `orch 1.2.0-candidate`  

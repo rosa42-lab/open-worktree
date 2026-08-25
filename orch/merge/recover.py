@@ -13,6 +13,7 @@ from orch.db import immediate_transaction
 from orch.git.ref import run_git_ref
 from orch.git.worktree import run_git_worktree
 from orch.merge.do import capture_conflict_files
+from orch.merge.finalize import writeback_topic_merged
 from orch.state_machine import assert_transition
 from orch.util import utc_now_iso
 
@@ -77,6 +78,7 @@ def recover_task(
                 task_id=task["id"],
                 detail={"recovered_as": "merged", "merged_commit": head},
             )
+            writeback_topic_merged(c, task["id"], finished)
         return {"task_id": task["id"], "recovered_as": "merged", "merged_commit": head}
 
     # 3) MERGE_HEAD present — try abort once

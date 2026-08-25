@@ -71,7 +71,7 @@ flowchart TB
 | `orch/remote/` | RemoteGit、GitHub/manual/gitlab provider、probe、auth |
 | `orch/state_machine.py` | 合并任务状态机 |
 | `orch/agent_state.py` | Agent run 生命周期状态机 |
-| `orch/migrations.py` | SQLite schema：v1 → v2 → v3 |
+| `orch/migrations.py` | SQLite schema：v1 → v2 → v3 → v4 |
 | `tests/` | 单元、集成和 acceptance 测试 |
 
 ## 3. 项目与 Worktree 布局
@@ -96,7 +96,7 @@ flowchart TB
 |-- config.json                # projects + promotion.<project>
 |-- config.json.lock
 |-- data/<project>/
-|   |-- orchestrator.db        # schema user_version=3
+|   |-- orchestrator.db        # schema user_version=4
 |   `-- project.lock
 `-- runtime/
     |-- opencode.json
@@ -226,7 +226,7 @@ Active `master_release` 期间，claim 被 `release_freeze` 拒绝（仍可 `enq
 
 ### 5.2 SQLite
 
-每个项目使用独立 SQLite，当前 schema 版本为 **3**。连接配置包括：
+每个项目使用独立 SQLite，当前 schema 版本为 **4**。连接配置包括：
 
 - foreign keys；
 - WAL journal；
@@ -252,9 +252,9 @@ Active `master_release` 期间，claim 被 `release_freeze` 拒绝（仍可 `enq
 | `promotion_events` | promotion 审计事件（含 release-sync） |
 | `promotion_tasks` | promotion 追溯到的本地 merge tasks |
 
-## 6. 三套独立状态机
+## 6. 四套独立状态机
 
-合并任务、Agent 运行、远端晋级被有意拆开：代码是否已经合入 local develop、Agent 是否仍在运行、远端是否已经发布，是三个不同事实。
+合并任务、Agent 运行、远端晋级、Topic 生命周期被有意拆开：代码是否已经合入 local develop、Agent 是否仍在运行、远端是否已经发布、专题是否 ready/enqueued/merged，是不同事实。
 
 ### 6.1 合并任务状态
 
@@ -374,15 +374,16 @@ Topic 位于 worktree、merge queue 和 Agent runtime 之上，用于表达一�
 - Topic 关联 branch、worktree、coordinator 和可选 active run；
 - `topic-ready` 校验 commands 与 commit SHA，桥接为 `verification_records`，并标记 `ready_for_enqueue`。
 
-当前没有形成完整闭环：
+当前供给闭环（schema 4）：
 
-- `topic-start` 不自动创建 branch/worktree/session/worker；
-- `topic-ready` 不自动 enqueue；
-- 没有独立 `topic-enqueue` 命令；
-- brief 仍通过较弱的 `plan_path` 标记保存；
-- `topic_id`、`agent_run_id`、`task_id` 仍是较松散的可空关联。
+- `topic-start --agent` 供给隔离 branch + worktree（dest=`worktrees/<agent>-<safe-branch>`），钉住 develop SHA；`--start-session` 才拉 OpenCode。无 session 时保持 `proposed`，不得标 `active`。continue 可补写空的 `agent_name`。
+- `topic-ready` 校验 Git 证据（已注册 WT、HEAD 分支、干净工作区、`--commit==HEAD`、`develop..HEAD` 非空），写入 `verification_records`，标记 `ready_for_enqueue`。**不入队、不合入。**
+- `topic-enqueue` 把 ready Topic 喂进现有 merge queue；同事务写 `topics.task_id` + `agent_runs.task_id` + `agent_runs.topic_id`。身份是关联图：canonical id 仅为 `topics.id`。
+- 入队后应用层冻结：`tasks.status ∈ {pending, merging}` 时禁止第二 task、禁止新 SHA `topic-ready`、禁止在该 WT `agent-start`（`topic_sha_frozen`）。`conflict` / `recovery_required` 允许同 WT 写者与再 `topic-ready`（更新证据，lifecycle 保持 `enqueued`）；仅 `retry` 改 `source_commit`。无第三把 WT 文件锁。`topic-enqueue` 冻结的 SHA 必须等于 `topic-ready` 的 verification SHA。
+- merge 成功与 `reset-stuck` recover-as-merged 回写 `lifecycle_state=merged`；`skip` → `rejected` 并清空 `task_id`；`topic-abandon` 将 `proposed|active|ready` 标 `cancelled`（之后 `topic-ready` 拒绝 `topic_ready_illegal`）。
+- ready ≠ enqueue ≠ merge ≠ deployed。裸 `enqueue` 遇到活 Topic 同 branch/path 必须拒绝。`master_release` 下仍可 enqueue，claim 被冻。
 
-因此，当前 Topic 更接近“产品记录与导航层”，还不是端到端编排器。`topic-ready` 与 enqueue 的显式边界暂时保留，直到编排流程具备幂等和恢复语义。
+brief 仍可通过较弱的 `plan_path` 标记保存。
 
 ## 9. 远端晋级与 release（v1.3）
 
@@ -468,8 +469,8 @@ Runtime guard 始终先于 Git 删除操作，hook 也不能绕过内建 guard�
 
 ### 12.3 已知实现缺口
 
-1. Topic 到 worktree、worker、enqueue 的端到端编排尚未闭环。
-2. `task_id`、`agent_run_id`、`topic_id` 之间仍是较松散的可空关联。
+1. Topic 供给闭环已落地（CLI argv：`topic-start --agent` → ready → enqueue → merge/skip/abandon）；`--start-session` 才需要 runtime。
+2. 入队后 `topics.task_id` / `agent_runs.task_id` / `agent_runs.topic_id` 同事务写入；无 run 时后两列保持空，lookup 以 `topics.task_id` 为准。
 3. Runtime capability 假设没有作为 server generation 的强约束持续校验。
 4. 安装主要依赖脚本与 wrapper，尚无标准 `pyproject.toml` 打包。
 5. 项目名唯一，但同一路径可以被不同名称重复注册。
@@ -479,22 +480,13 @@ Runtime guard 始终先于 Git 删除操作，hook 也不能绕过内建 guard�
 
 ## 13. 下一阶段建议
 
-### P0：补齐 Topic 执行闭环
+### 已落地：Topic 供给闭环（V14 + V15）
 
-将 Topic 建模为可恢复的应用流程，而不是不可观察的一键脚本：
+产品路径（无 runtime 也可走完）：`topic-start --agent` 供给隔离（`--start-session` 才拉 OpenCode）→ `topic-ready`（Git 证据，不入队）→ `topic-enqueue`（verification SHA 必须等于 branch tip）→ `merge` / `retry` / `skip` / `reset-stuck` 回写 Topic。`merged` 只表示到达本地 `develop`。
 
-```text
-topic-start
--> worktree-add
--> agent-start
--> development
--> topic-ready
--> topic-enqueue
--> merge
--> archive/cleanup
-```
+后续加固见 [`docs/topic-closed-loop-v15-tasks.md`](topic-closed-loop-v15-tasks.md) 未完成项（路径大小写变体、CLI `--help` 锁表、id-or-name）。
 
-每一步都应保存状态、输入、输出和失败证据，并支持幂等重试。在该流程具备恢复语义之前，保持 `topic-ready` 与 enqueue 的显式边界。
+保持 `topic-ready` 与 enqueue 的显式边界：ready 永不入队。
 
 ### P1：收紧领域关联
 
@@ -544,7 +536,7 @@ Server 重启、升级或重新登记后，关键能力必须重新确认。
 7. 未确认 Session idle 前不得签发人工可写 lease。
 8. cleanup 必须先通过 runtime guard，再进行任何 Git 删除。
 9. external 或身份不明的 Server/进程不得由 orch 终止。
-10. `topic-ready` 与 enqueue/merge 保持显式边界，直到新的应用流程具备完整幂等和恢复语义。
+10. `topic-ready` 永不入队或合入；enqueue / merge / deployed 是后续独立步骤。入队后 SHA 冻结，仅 retry 可改 source_commit。
 11. origin/develop 只允许带旧/新 SHA 的非强制 CAS；禁止 `--force` / `--force-with-lease`。
 12. origin/master 不得由 orch 直接 push；只经 Promotion PR 的 merge commit。
 13. 无 `passed` 且未过期的 verification 时，promote / release 必须 fail-closed。
@@ -555,6 +547,9 @@ Server 重启、升级或重新登记后，关键能力必须重新确认。
 
 - `README.md`：安装、命令和快速使用。
 - `docs/usage-scenarios.md`：worktree 合并队列和人工接管场景。
+- `docs/topic-industry-analysis.md`：Topic 类系统行业对照。
+- `docs/topic-closed-loop-plan.md`：Topic 执行闭环开发方案（§0 为规格权威）。
+- `docs/topic-closed-loop-v15-tasks.md`：相对 §0 的整改任务。
 - `docs/remote-branch-promotion-design.md`：远端晋级设计。
 - `docs/v1.3-tasks.md` / `docs/v1.3-tasks-009-012.md`：v1.3 任务与完成记录。
 - `docs/v1.3-acceptance-results.md`：v1.3 验收矩阵。
