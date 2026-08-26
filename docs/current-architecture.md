@@ -381,6 +381,9 @@ Topic 位于 worktree、merge queue 和 Agent runtime 之上，用于表达一�
 - `topic-enqueue` 把 ready Topic 喂进现有 merge queue；同事务写 `topics.task_id` + `agent_runs.task_id` + `agent_runs.topic_id`。身份是关联图：canonical id 仅为 `topics.id`。
 - 入队后应用层冻结：`tasks.status ∈ {pending, merging}` 时禁止第二 task、禁止新 SHA `topic-ready`、禁止在该 WT `agent-start`（`topic_sha_frozen`）。`conflict` / `recovery_required` 允许同 WT 写者与再 `topic-ready`（更新证据，lifecycle 保持 `enqueued`）；仅 `retry` 改 `source_commit`。无第三把 WT 文件锁。`topic-enqueue` 冻结的 SHA 必须等于 `topic-ready` 的 verification SHA。
 - merge 成功与 `reset-stuck` recover-as-merged 回写 `lifecycle_state=merged`；`skip` → `rejected` 并清空 `task_id`；`topic-abandon` 将 `proposed|active|ready` 标 `cancelled`（之后 `topic-ready` 拒绝 `topic_ready_illegal`）。
+- worktree 路径入库与等值比较一律走 `canonical_worktree_path`（`normalize_path` 的字符串），避免 Windows 盘符大小写、斜杠与尾斜杠把冻结/守卫拆成两条键。
+- `agent-stop`、`agent-archive`、takeover 释放到 `exited` 时清空 `topics.active_run_id`。`lost` / `stopping` 不清指针。`topic-open` 在指针失效后走 directory locator，不拿死 `run_id` 去 `agent_open`。
+- `cleanup --prune`：活 Topic（`proposed|active|ready|enqueued`）拒绝删除（`topic_prune_blocked`），worktree 保留；`merged`/`rejected` Topic 在 Git gauntlet 成功后与 `tasks.archived_at` **同一短事务**标 `archived`（`last_step=prune`）。UNIQUE 含 archived 仍占用 name/branch/path（故意墓碑）。
 - ready ≠ enqueue ≠ merge ≠ deployed。裸 `enqueue` 遇到活 Topic 同 branch/path 必须拒绝。`master_release` 下仍可 enqueue，claim 被冻。
 
 brief 仍可通过较弱的 `plan_path` 标记保存。
@@ -414,6 +417,7 @@ brief 仍可通过较弱的 `plan_path` 标记保存。
 
 - 无活跃、lost、manual_required 或 human-controlled run；
 - 无未过期 lease；
+- 无活 Topic（`proposed|active|ready|enqueued`）占用该 task / canonical path / branch（否则 `topic_prune_blocked`）；
 - 可选 blocking `BeforeWorktreeRemove` hook 通过；
 - worktree 属于目标 bare repository；
 - worktree 干净且唯一注册；
@@ -425,7 +429,7 @@ brief 仍可通过较弱的 `plan_path` 标记保存。
 1. 删除 worktree；
 2. 使用带旧 tip 校验的 `update-ref -d` 删除分支；
 3. 执行 `git worktree prune`；
-4. 设置任务 `archived_at` 并写审计。
+4. 设置任务 `archived_at`；若匹配 Topic 已是 `merged`/`rejected`，同事务标 `archived`（`last_step=prune`）；写审计。
 
 Runtime guard 始终先于 Git 删除操作，hook 也不能绕过内建 guard。
 
@@ -484,7 +488,7 @@ Runtime guard 始终先于 Git 删除操作，hook 也不能绕过内建 guard�
 
 产品路径（无 runtime 也可走完）：`topic-start --agent` 供给隔离（`--start-session` 才拉 OpenCode）→ `topic-ready`（Git 证据，不入队）→ `topic-enqueue`（verification SHA 必须等于 branch tip）→ `merge` / `retry` / `skip` / `reset-stuck` 回写 Topic。`merged` 只表示到达本地 `develop`。
 
-后续加固见 [`docs/topic-closed-loop-v15-tasks.md`](topic-closed-loop-v15-tasks.md) 未完成项（路径大小写变体、CLI `--help` 锁表、id-or-name）。
+V16 已补：路径 canonicalize、run 退出清 `active_run_id`、`cleanup --prune` 拒绝活 Topic 并归档 merged Topic。见 [`docs/topic-closed-loop-v16-tasks.md`](topic-closed-loop-v16-tasks.md)。仍可选：CLI `--help` 锁表、id-or-name。
 
 保持 `topic-ready` 与 enqueue 的显式边界：ready 永不入队。
 

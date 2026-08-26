@@ -68,3 +68,9 @@ V15-001 CLI 产品路径（--agent 与 session 解耦）
   - 身份链断言 `len(runs) >= 1` 或显式「无 session 则 runs 为空」；abandon / ready 查 DB 列
   - Skill：`enqueue` 遇到活 Topic → `topic_enqueue_required`；`--agent` 不启 session；`merged` = 本地 develop；冻结/retry；`topic-enqueue` / `topic-abandon` 进 `REQUIRED_SNIPPETS`
   - architecture：schema **4**；§13 不再把本闭环写成「下一阶段 P0」
+
+---
+
+## 后续：V16
+
+路径 canonicalize、run 退出清空 `active_run_id`、`cleanup --prune` 看见 Topic：见 [`topic-closed-loop-v16-tasks.md`](topic-closed-loop-v16-tasks.md)。

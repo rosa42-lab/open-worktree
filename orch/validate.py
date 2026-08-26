@@ -54,6 +54,11 @@ def normalize_path(path_str: str, *, label: str = "path") -> Path:
     return resolved
 
 
+def canonical_worktree_path(path_str: str, *, label: str = "worktree_path") -> str:
+    """Byte key for SQLite UNIQUE / equality: resolved path as a string."""
+    return str(normalize_path(path_str, label=label))
+
+
 def branch_safe_name(branch: str) -> str:
     """Convert branch name to worktree directory safe segment."""
     if not branch:

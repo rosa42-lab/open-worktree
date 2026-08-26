@@ -18,7 +18,7 @@ from orch.locks import acquire, release
 from orch.registry import get_project_path
 from orch.state_machine import assert_transition
 from orch.util import utc_now_iso
-from orch.validate import normalize_path, validate_agent_name, validate_project_name
+from orch.validate import canonical_worktree_path, validate_agent_name, validate_project_name
 
 
 def _git_enqueue_precheck(
@@ -83,7 +83,8 @@ def enqueue_unlocked(
     """Git precheck + INSERT. Caller must already hold project.lock. No nested acquire."""
     root = get_project_path(project)
     bare = (root / BARE_DIR_NAME).resolve()
-    wt = normalize_path(worktree_path, label="worktree_path")
+    wt_key = canonical_worktree_path(worktree_path)
+    wt = Path(wt_key)
     if not wt.exists():
         raise ValidationError(
             f"worktree path does not exist: {wt}",
@@ -104,13 +105,26 @@ def enqueue_unlocked(
     if topic_id is None:
         live = conn.execute(
             """
-            SELECT id, name FROM topics
+            SELECT id, name, worktree_path FROM topics
             WHERE project_name = ?
               AND lifecycle_state NOT IN ('archived', 'cancelled', 'merged', 'rejected')
               AND (branch_name = ? OR worktree_path = ?)
             """,
-            (project, branch, str(wt)),
+            (project, branch, wt_key),
         ).fetchone()
+        if live is None:
+            for candidate in conn.execute(
+                """
+                SELECT id, name, worktree_path FROM topics
+                WHERE project_name = ?
+                  AND lifecycle_state NOT IN ('archived', 'cancelled', 'merged', 'rejected')
+                """,
+                (project,),
+            ):
+                stored = candidate["worktree_path"]
+                if stored and canonical_worktree_path(str(stored)) == wt_key:
+                    live = candidate
+                    break
         if live is not None:
             raise ValidationError(
                 "worktree/branch belongs to a live topic; use topic-enqueue",
@@ -143,7 +157,7 @@ def enqueue_unlocked(
                     task_id,
                     agent,
                     branch,
-                    str(wt),
+                    wt_key,
                     priority,
                     "pending",
                     submitted,
@@ -210,7 +224,7 @@ def enqueue_unlocked(
         "task_id": task_id,
         "agent": agent,
         "branch": branch,
-        "worktree_path": str(wt),
+        "worktree_path": wt_key,
         "priority": priority,
         "status": "pending",
         "source_commit": source,

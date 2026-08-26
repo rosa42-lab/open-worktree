@@ -26,7 +26,30 @@ from orch.runtime.cleanup_guard import runtime_prune_blockers
 from orch.runtime.hooks import load_hooks_config, run_hook
 from orch.task_resolve import row_to_dict
 from orch.util import utc_now_iso
-from orch.validate import validate_project_name
+from orch.validate import canonical_worktree_path, validate_project_name
+
+_LIVE_TOPIC_STATES = frozenset({"proposed", "active", "ready", "enqueued"})
+
+
+def _topics_matching_task(conn, task: dict[str, Any]) -> list[Any]:
+    """Topics occupying this task's id, canonical worktree path, or branch."""
+    key = canonical_worktree_path(str(task["worktree_path"]))
+    found: dict[str, Any] = {}
+    for row in conn.execute(
+        """
+        SELECT * FROM topics
+        WHERE task_id = ?
+           OR worktree_path = ?
+           OR branch_name = ?
+        """,
+        (task["id"], key, task["branch_name"]),
+    ):
+        found[row["id"]] = row
+    for candidate in conn.execute("SELECT * FROM topics"):
+        stored = candidate["worktree_path"]
+        if stored and canonical_worktree_path(str(stored)) == key:
+            found[candidate["id"]] = candidate
+    return list(found.values())
 
 
 def _parse_iso(ts: str | None) -> datetime | None:
@@ -120,6 +143,15 @@ def _prune_one(conn, bare: Path, task: dict[str, Any]) -> dict[str, Any]:
             "ok": False,
             "reason": "runtime_blocked",
             "blockers": blockers,
+        }
+
+    matching_topics = _topics_matching_task(conn, task)
+    if any(t["lifecycle_state"] in _LIVE_TOPIC_STATES for t in matching_topics):
+        return {
+            "task_id": task["id"],
+            "ok": False,
+            "reason": "topic_prune_blocked",
+            "kind": "topic_prune_blocked",
         }
 
     # Optional BeforeWorktreeRemove hook (cannot bypass guards above)
@@ -232,11 +264,33 @@ def _prune_one(conn, bare: Path, task: dict[str, Any]) -> dict[str, Any]:
     run_git_ref(["worktree", "prune"], bare)
 
     archived = utc_now_iso()
+    wt_key = canonical_worktree_path(str(wt))
     with immediate_transaction(conn) as c:
         c.execute(
             "UPDATE tasks SET archived_at = ? WHERE id = ?",
             (archived, task["id"]),
         )
+        c.execute(
+            """
+            UPDATE topics
+            SET lifecycle_state = 'archived', archived_at = ?, last_step = 'prune',
+                updated_at = ?
+            WHERE (task_id = ? OR worktree_path = ? OR branch_name = ?)
+              AND lifecycle_state IN ('merged', 'rejected')
+            """,
+            (archived, archived, task["id"], wt_key, branch),
+        )
+        for topic in matching_topics:
+            if topic["lifecycle_state"] in ("merged", "rejected"):
+                c.execute(
+                    """
+                    UPDATE topics
+                    SET lifecycle_state = 'archived', archived_at = ?, last_step = 'prune',
+                        updated_at = ?
+                    WHERE id = ? AND lifecycle_state IN ('merged', 'rejected')
+                    """,
+                    (archived, archived, topic["id"]),
+                )
         write_audit(
             c,
             "cleanup_pruned",

@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from orch.db import open_project_db
 from tests.helpers.git_fixture import commit_file
 from tests.helpers.orch_env import OrchEnvTestCase
+
+
+def _backdate_finished(project: str, task_id: str, hours: int = 48) -> None:
+    past = (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    conn = open_project_db(project, init=False)
+    try:
+        conn.execute(
+            "UPDATE tasks SET finished_at = ? WHERE id = ?",
+            (past, task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 class TopicCliLoopTests(OrchEnvTestCase):
@@ -209,3 +225,67 @@ class TopicCliLoopTests(OrchEnvTestCase):
         self.assertTrue(recs, msg=str(recovered))
         self.assertEqual(recs[0]["recovered_as"], "merged")
         self.assertEqual(self._db_topic(topic_id)["lifecycle_state"], "merged")
+
+    def _topic_through_merge(self, name: str, branch: str, filename: str) -> tuple[str, str, Path]:
+        started = self._ok(
+            "topic-start",
+            name,
+            "--title",
+            name.title(),
+            "--goal",
+            "ship",
+            "--branch",
+            branch,
+            "--agent",
+            "coder",
+        )
+        topic_id = started["topic"]["id"]
+        wt = Path(started["topic"]["worktree_path"])
+        sha = commit_file(wt, filename, "x = 1\n")
+        self._ok("topic-ready", topic_id, "--commit", sha, "--command", "pytest")
+        enq = self._ok("topic-enqueue", topic_id)
+        task_id = enq["task_id"]
+        self._ok("merge", "--once")
+        self.assertEqual(self._db_topic(topic_id)["lifecycle_state"], "merged")
+        return topic_id, task_id, wt
+
+    def test_argv_prune_archives_merged_topic(self) -> None:
+        topic_id, task_id, wt = self._topic_through_merge(
+            "prunable", "feat/prunable", "p.py"
+        )
+        _backdate_finished(self.project, task_id)
+        pruned = self._ok("cleanup", "--prune")
+        results = {r["task_id"]: r for r in pruned["results"]}
+        self.assertTrue(results[task_id].get("ok"), results[task_id])
+        self.assertFalse(wt.exists())
+        row = self._db_topic(topic_id)
+        self.assertEqual(row["lifecycle_state"], "archived")
+        self.assertIsNotNone(row["archived_at"])
+        self.assertEqual(row["last_step"], "prune")
+
+    def test_argv_prune_refuses_live_topic(self) -> None:
+        topic_id, task_id, wt = self._topic_through_merge(
+            "leaky", "feat/leaky", "l.py"
+        )
+        conn = open_project_db(self.project, init=True)
+        try:
+            conn.execute(
+                """
+                UPDATE topics
+                SET lifecycle_state = 'enqueued', archived_at = NULL
+                WHERE id = ?
+                """,
+                (topic_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        _backdate_finished(self.project, task_id)
+        code, payload = self.env.run_json(self.project, "cleanup", "--prune", "--json")
+        self.assertEqual(code, 0, msg=str(payload))
+        results = {r["task_id"]: r for r in payload["data"]["results"]}
+        self.assertFalse(results[task_id].get("ok"), results[task_id])
+        self.assertEqual(results[task_id].get("reason"), "topic_prune_blocked")
+        self.assertEqual(results[task_id].get("kind"), "topic_prune_blocked")
+        self.assertTrue(wt.exists())
+        self.assertEqual(self._db_topic(topic_id)["lifecycle_state"], "enqueued")

@@ -7,6 +7,7 @@ from typing import Any
 
 from orch.agent_state import CLEANUP_BLOCKING_LIFECYCLE
 from orch.runtime.lease import get_lease, lease_expired
+from orch.validate import canonical_worktree_path
 
 
 def runtime_prune_blockers(
@@ -36,13 +37,14 @@ def runtime_prune_blockers(
                 }
             )
 
-    rows = conn.execute(
-        """
-        SELECT * FROM agent_runs
-        WHERE worktree_path = ?
-        """,
-        (worktree_path,),
-    ).fetchall()
+    key = canonical_worktree_path(worktree_path)
+    rows = conn.execute("SELECT * FROM agent_runs").fetchall()
+    rows = [
+        row
+        for row in rows
+        if row["worktree_path"]
+        and canonical_worktree_path(str(row["worktree_path"])) == key
+    ]
     for row in rows:
         d = {k: row[k] for k in row.keys()}
         state = d.get("state")

@@ -18,7 +18,7 @@ from orch.git.ref import run_git_ref
 from orch.git.worktree import worktree_list_porcelain
 from orch.locks import acquire, release
 from orch.registry import get_project_path
-from orch.validate import branch_safe_name, validate_agent_name, validate_project_name
+from orch.validate import branch_safe_name, canonical_worktree_path, validate_agent_name, validate_project_name
 
 
 def worktree_dest(root: Path, agent: str, branch: str) -> Path:
@@ -77,7 +77,7 @@ def worktree_add_unlocked(
         "project": project,
         "agent": agent,
         "branch": branch,
-        "worktree_path": str(dest.resolve()),
+        "worktree_path": canonical_worktree_path(str(dest.resolve())),
         "base": base,
         "base_sha": pin,
         "created_branch": not exists.ok,

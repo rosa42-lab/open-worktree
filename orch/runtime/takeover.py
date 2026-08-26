@@ -343,6 +343,9 @@ def release_control(
                 """,
                 (utc_now_iso(), utc_now_iso(), run_id),
             )
+            from orch.runtime.lifecycle import clear_topic_active_run
+
+            clear_topic_active_run(conn, run_id)
             conn.commit()
             return {
                 "mode": "release",

@@ -24,7 +24,7 @@ from orch.registry import get_project_path
 from orch.runtime.registry import load_registry
 from orch.runtime.takeover import agent_open, fork_inspect
 from orch.util import utc_now_iso
-from orch.validate import normalize_path
+from orch.validate import canonical_worktree_path, normalize_path
 
 
 def _new_id(prefix: str) -> str:
@@ -282,7 +282,7 @@ def topic_start(
                         coord["id"],
                         int(coord["generation"]),
                         branch_name,
-                        str(dest.resolve()),
+                        canonical_worktree_path(str(dest)),
                         None,
                         plan_path,
                         "planning" if brief else "none",
@@ -305,7 +305,7 @@ def topic_start(
                         updated_at = ?
                     WHERE id = ?
                     """,
-                    (added["base_sha"], added["worktree_path"], utc_now_iso(), tid),
+                    (added["base_sha"], canonical_worktree_path(added["worktree_path"]), utc_now_iso(), tid),
                 )
             created_wt = True
 
@@ -338,7 +338,7 @@ def topic_start(
                     conn,
                     agent=agent_name,
                     branch=branch_name,
-                    worktree_path=str(dest.resolve()),
+                    worktree_path=canonical_worktree_path(str(dest)),
                     topic_id=tid,
                 )
             run_id = (run_payload.get("run") or {}).get("id") or run_payload.get(
@@ -365,7 +365,7 @@ def topic_start(
         reg = load_registry() or {}
         locator = attach_locator(
             base_url=str(reg.get("base_url") or "http://127.0.0.1:4096"),
-            worktree_path=str(dest.resolve()),
+            worktree_path=canonical_worktree_path(str(dest)),
             session_id=None,
         )
         return {

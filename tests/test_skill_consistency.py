@@ -27,6 +27,7 @@ REQUIRED_SNIPPETS = [
     "topic_enqueue_required",
     "topic_sha_frozen",
     "runtime_blocked",
+    "topic_prune_blocked",
     "develop",
     "1.3.0",
     "promote-develop",

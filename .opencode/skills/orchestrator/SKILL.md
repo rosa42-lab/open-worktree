@@ -141,7 +141,7 @@ Use `--json` for automation. Envelope: `schema_version`, `ok`, `command`, `data`
 
 - Never put Server password or lease token on argv; credentials file is same-user readable (not a sandbox).
 - Do not kill unknown port owners; do not `runtime stop` external Servers.
-- `cleanup --prune` is blocked by active/human/lost/manual/unarchived runs and skipped tasks (`runtime_blocked`).
+- `cleanup --prune` is blocked by active/human/lost/manual/unarchived runs and skipped tasks (`runtime_blocked`). Live Topics (`proposed|active|ready|enqueued`) refuse prune (`topic_prune_blocked`); a `merged` Topic is archived in the same transaction as the task. `merged` still means local develop only.
 - Do not edit SQLite/locks by hand; do not Git-write `develop` or `main/` outside orch.
 - Hooks: argv arrays only, `shell=False`; no `cmd /c` / `powershell -Command`.
 

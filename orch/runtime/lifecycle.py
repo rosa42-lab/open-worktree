@@ -25,9 +25,53 @@ from orch.runtime.opencode import OpenCodeRuntimeAdapter
 from orch.runtime.registry import load_credentials, load_registry, public_registry_view
 from orch.runtime.worker import spawn_worker_env
 from orch.util import utc_now_iso
-from orch.validate import normalize_path
+from orch.validate import canonical_worktree_path
 
 STARTUP_HEARTBEAT_DEADLINE_SEC = 15.0
+
+
+def find_frozen_topic(conn: Any, project: str, worktree_path: str) -> Any:
+    """Locate an enqueued topic occupying this worktree. Path variants canonicalize."""
+    key = canonical_worktree_path(worktree_path)
+    row = conn.execute(
+        """
+        SELECT t.id AS topic_id, tk.status AS task_status, t.worktree_path
+        FROM topics t
+        LEFT JOIN tasks tk ON tk.id = t.task_id
+        WHERE t.project_name = ?
+          AND t.lifecycle_state = 'enqueued'
+          AND t.worktree_path = ?
+        """,
+        (project, key),
+    ).fetchone()
+    if row is not None:
+        return row
+    for candidate in conn.execute(
+        """
+        SELECT t.id AS topic_id, tk.status AS task_status, t.worktree_path
+        FROM topics t
+        LEFT JOIN tasks tk ON tk.id = t.task_id
+        WHERE t.project_name = ?
+          AND t.lifecycle_state = 'enqueued'
+        """,
+        (project,),
+    ):
+        stored = candidate["worktree_path"]
+        if stored and canonical_worktree_path(str(stored)) == key:
+            return candidate
+    return None
+
+
+def clear_topic_active_run(conn: Any, run_id: str) -> None:
+    """Drop topics.active_run_id when the pointed-at run has exited or archived."""
+    conn.execute(
+        """
+        UPDATE topics
+        SET active_run_id = NULL, updated_at = ?
+        WHERE active_run_id = ?
+        """,
+        (utc_now_iso(), run_id),
+    )
 
 
 class AgentLifecycleService:
@@ -84,7 +128,7 @@ class AgentLifecycleService:
         """Same as start() but caller already holds project.lock."""
         import sqlite3
 
-        worktree_path = str(normalize_path(worktree_path, label="worktree_path"))
+        worktree_path = canonical_worktree_path(worktree_path)
         reg = load_registry()
         if not reg or not reg.get("base_url"):
             raise ValidationError(
@@ -101,8 +145,8 @@ class AgentLifecycleService:
         # Precheck: no other active run on worktree
         for row in list_runs(conn, self.project):
             stored = row.get("worktree_path")
-            same_wt = stored is not None and str(
-                normalize_path(str(stored), label="worktree_path")
+            same_wt = stored is not None and canonical_worktree_path(
+                str(stored)
             ) == worktree_path
             if same_wt and row.get("state") in CLEANUP_BLOCKING_LIFECYCLE:
                 raise ValidationError(
@@ -111,17 +155,7 @@ class AgentLifecycleService:
                     details={"run_id": row["id"]},
                 )
 
-        frozen = conn.execute(
-            """
-            SELECT t.id AS topic_id, tk.status AS task_status
-            FROM topics t
-            LEFT JOIN tasks tk ON tk.id = t.task_id
-            WHERE t.project_name = ?
-              AND t.lifecycle_state = 'enqueued'
-              AND t.worktree_path = ?
-            """,
-            (self.project, worktree_path),
-        ).fetchone()
+        frozen = find_frozen_topic(conn, self.project, worktree_path)
         if frozen is not None and frozen["task_status"] in ("pending", "merging"):
             raise ValidationError(
                 "enqueued topic worktree is frozen until merge, skip, or conflict",
@@ -399,6 +433,7 @@ class AgentLifecycleService:
                 """,
                 (now, now, run_id),
             )
+            clear_topic_active_run(conn, run_id)
             conn.commit()
             release_lease(conn, run_id=run_id)
             return {"run": self._public_run(get_run(conn, run_id))}
@@ -449,6 +484,8 @@ class AgentLifecycleService:
             "UPDATE agent_runs SET state = ?, updated_at = ? WHERE id = ?",
             (to_state, utc_now_iso(), run_id),
         )
+        if to_state == "exited":
+            clear_topic_active_run(conn, run_id)
         conn.commit()
 
     @staticmethod

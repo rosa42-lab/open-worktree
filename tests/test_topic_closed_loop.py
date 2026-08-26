@@ -184,6 +184,36 @@ class TopicReadyEnqueueTests(OrchEnvTestCase):
             cmd_enqueue(self.project, self.agent, self.branch, str(self.wt))
         self.assertEqual(ctx.exception.kind, "topic_enqueue_required")
 
+    def test_frozen_topic_lookup_matches_path_variants(self) -> None:
+        import os
+        import sys
+
+        from orch.runtime.lifecycle import find_frozen_topic
+        from orch.validate import canonical_worktree_path
+
+        sha = commit_file(self.wt, "auth.py", "x = 1\n")
+        self._ready(sha)
+        topic_enqueue(self.project, self.topic_id)
+        stored = canonical_worktree_path(str(self.wt.resolve()))
+        conn = open_project_db(self.project, init=True)
+        try:
+            row = conn.execute(
+                "SELECT worktree_path FROM topics WHERE id = ?", (self.topic_id,)
+            ).fetchone()
+            self.assertEqual(row["worktree_path"], stored)
+            sep = "\\" if os.name == "nt" else "/"
+            variants = [str(self.wt), self.wt.as_posix(), str(self.wt.resolve()) + sep]
+            if sys.platform == "win32":
+                raw = str(self.wt.resolve())
+                if len(raw) >= 2 and raw[1] == ":":
+                    variants.append(raw[0].swapcase() + raw[1:])
+            for variant in variants:
+                frozen = find_frozen_topic(conn, self.project, variant)
+                self.assertIsNotNone(frozen, msg=variant)
+                self.assertEqual(frozen["topic_id"], self.topic_id)
+        finally:
+            conn.close()
+
     def test_enqueue_writes_agent_run_identity_when_run_exists(self) -> None:
         conn = open_project_db(self.project, init=True)
         try:
@@ -359,3 +389,129 @@ class TopicReadyEnqueueTests(OrchEnvTestCase):
         out = topic_abandon(self.project, self.topic_id)
         self.assertTrue(out["abandoned"])
         self.assertEqual(out["lifecycle_state"], "cancelled")
+
+
+class TopicActiveRunClearTests(OrchEnvTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        coordinator_bind(
+            self.project,
+            session_id="ses_coord",
+            directory=str(self.env.proj),
+        )
+        started = topic_start(
+            self.project,
+            name="auth",
+            title="Auth",
+            goal="ship",
+            branch_name="feat/auth",
+            agent_name="coder",
+            provision_session=False,
+        )
+        self.topic_id = started["topic"]["id"]
+        self.wt = started["topic"]["worktree_path"]
+
+    def _attach_running(self, run_id: str) -> None:
+        conn = open_project_db(self.project, init=True)
+        try:
+            conn.execute(
+                """
+                INSERT INTO agent_runs (
+                  id, project_name, agent_name, branch_name, worktree_path,
+                  runtime_kind, runtime_server_id, state, desired_state,
+                  observed_state, controller, controller_generation,
+                  created_at, updated_at, topic_id
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    run_id,
+                    self.project,
+                    "coder",
+                    "feat/auth",
+                    self.wt,
+                    "opencode",
+                    "srv",
+                    "running",
+                    "running",
+                    "busy",
+                    "agent",
+                    0,
+                    "t",
+                    "t",
+                    self.topic_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE topics SET active_run_id = ? WHERE id = ?",
+                (run_id, self.topic_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_stop_clears_active_run_id_and_open_is_directory(self) -> None:
+        from orch.commands.agent_lifecycle import cmd_agent_stop
+        from orch.commands.topic import topic_open
+
+        self._attach_running("run_stop")
+        cmd_agent_stop(self.project, "run_stop")
+        conn = open_project_db(self.project, init=True)
+        try:
+            row = conn.execute(
+                "SELECT active_run_id FROM topics WHERE id = ?", (self.topic_id,)
+            ).fetchone()
+            self.assertIsNone(row["active_run_id"])
+        finally:
+            conn.close()
+        opened = topic_open(self.project, self.topic_id)
+        self.assertEqual(opened["mode"], "topic_open")
+
+    def test_archive_clears_active_run_id(self) -> None:
+        from orch.commands.agent_lifecycle import cmd_agent_archive
+
+        conn = open_project_db(self.project, init=True)
+        try:
+            conn.execute(
+                """
+                INSERT INTO agent_runs (
+                  id, project_name, agent_name, branch_name, worktree_path,
+                  runtime_kind, runtime_server_id, state, desired_state,
+                  observed_state, controller, controller_generation,
+                  created_at, updated_at, topic_id
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    "run_arch",
+                    self.project,
+                    "coder",
+                    "feat/auth",
+                    self.wt,
+                    "opencode",
+                    "srv",
+                    "exited",
+                    "stopped",
+                    "exited",
+                    "none",
+                    0,
+                    "t",
+                    "t",
+                    self.topic_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE topics SET active_run_id = ? WHERE id = ?",
+                ("run_arch", self.topic_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        cmd_agent_archive(self.project, "run_arch")
+        conn = open_project_db(self.project, init=True)
+        try:
+            row = conn.execute(
+                "SELECT active_run_id FROM topics WHERE id = ?", (self.topic_id,)
+            ).fetchone()
+            self.assertIsNone(row["active_run_id"])
+        finally:
+            conn.close()
+
