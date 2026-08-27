@@ -131,17 +131,17 @@ def create_from_topic_ready(
     results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
-    将 topic-ready 的自由格式 verification 桥接为 commit-bound record。
-    若未提供 results，按“声明成功”写入脱敏摘要（保持既有信任模型，但可查询）。
+    Bridge topic-ready Git evidence into a commit-bound record.
+
+    Topic ready is attestation, not command execution. Default results must not
+    synthesize exit_code=0. Promote/release still require real aggregate results.
     """
     if results is None:
         results = [
             {
                 "command": cmd,
-                "exit_code": 0,
-                "stdout_summary": "",
-                "stderr_summary": "",
-                "detail": "declared_by_topic_ready",
+                "executed": False,
+                "trust_model": "attestation",
             }
             for cmd in commands
         ]
@@ -210,6 +210,11 @@ def _assert_results_complete(
         )
     for cmd in commands:
         row = by_cmd[cmd]
+        attested = (
+            row.get("trust_model") == "attestation" or row.get("executed") is False
+        )
+        if attested:
+            continue
         if "exit_code" not in row:
             raise ValidationError(
                 f"exit_code missing for command: {cmd}",

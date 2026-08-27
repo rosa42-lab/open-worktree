@@ -1,5 +1,7 @@
 # Topic 闭环开发方案 Implementation Plan
 
+> **V17+ 权威修正：** schema 头版本、Saga、attestation、runtime 身份与 capability 以 [`topic-closed-loop-v17-amendment.md`](topic-closed-loop-v17-amendment.md) 为准。本文 **§0 KEEP** 仍约束产品语义；与修正案冲突时 **修正案优先**。不要用本文「schema 4 为头 / last_step 即 checkpoint / 合成 exit_code=0」指导 V17–V19。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 orch Topic 从「给已有 worktree 贴标签」升成 **供给隔离** 的可恢复流程：`topic-start`（branch + WT + session，钉住 develop SHA）→ 开发 → `topic-ready`（SHA+command 证据）→ `topic-enqueue`（相对当前 develop 再验、冻 SHA、喂 orch 队列）→ `merge` → `archive`。**ready 与 enqueue 保持两条命令**；merged ≠ deployed。

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import uuid
 from pathlib import Path
@@ -37,6 +38,48 @@ def _topic_dest(root: Path, agent: str | None, branch: str) -> Path:
     return worktree_dest(root, agent or "topic", branch)
 
 
+def _load_brief_file(project: str, brief_file: str) -> dict[str, Any]:
+    """Resolve --brief-file against the project root. Do not use CWD."""
+    root = get_project_path(project).resolve()
+    raw = Path(brief_file)
+    candidate = raw if raw.is_absolute() else (root / raw)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValidationError(
+            f"brief file not found: {brief_file}",
+            kind="topic_brief_not_found",
+            details={"path": brief_file},
+        ) from exc
+    except OSError as exc:
+        raise ValidationError(
+            f"brief file is not readable: {brief_file}",
+            kind="topic_brief_not_file",
+            details={"path": brief_file, "error": str(exc)},
+        ) from exc
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValidationError(
+            "brief file must stay inside the project root",
+            kind="topic_brief_outside_root",
+            details={"path": str(resolved), "root": str(root)},
+        ) from exc
+    if not resolved.is_file():
+        raise ValidationError(
+            "brief file must be a regular file",
+            kind="topic_brief_not_file",
+            details={"path": str(resolved)},
+        )
+    digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    path_key = canonical_worktree_path(str(resolved), label="brief_file")
+    return {
+        "plan_path": path_key,
+        "digest": digest,
+        "stored": f"{path_key}|sha256:{digest}",
+    }
+
+
 def _registered_worktrees(bare: Path) -> dict[Path, dict[str, str]]:
     out: dict[Path, dict[str, str]] = {}
     for entry in worktree_list_porcelain(bare):
@@ -45,6 +88,59 @@ def _registered_worktrees(bare: Path) -> dict[Path, dict[str, str]]:
             continue
         out[Path(raw).resolve()] = entry
     return out
+
+
+def resolve_topic_ref(
+    conn: sqlite3.Connection, project: str, id_or_name: str
+) -> dict[str, str]:
+    """Project-scoped selector: exact id wins over exact name. No fuzzy match."""
+    if id_or_name is None:
+        raise ValidationError("topic ref is required", kind="topic_ref_invalid")
+    ref = str(id_or_name).strip()
+    if not ref:
+        raise ValidationError("topic ref is empty", kind="topic_ref_invalid")
+    for ch in ref:
+        if ord(ch) < 32:
+            raise ValidationError(
+                "topic ref contains a control character",
+                kind="topic_ref_invalid",
+            )
+    by_id = conn.execute(
+        "SELECT id FROM topics WHERE project_name = ? AND id = ?",
+        (project, ref),
+    ).fetchone()
+    if by_id is not None:
+        return {
+            "input_ref": str(id_or_name),
+            "resolved_by": "id",
+            "canonical_id": str(by_id["id"]),
+        }
+    by_name = conn.execute(
+        "SELECT id FROM topics WHERE project_name = ? AND name = ?",
+        (project, ref),
+    ).fetchone()
+    if by_name is not None:
+        return {
+            "input_ref": str(id_or_name),
+            "resolved_by": "name",
+            "canonical_id": str(by_name["id"]),
+        }
+    raise ValidationError(f"unknown topic: {id_or_name}", kind="topic_not_found")
+
+
+def _load_topic(
+    conn: sqlite3.Connection, project: str, topic_ref: str
+) -> sqlite3.Row:
+    resolved = resolve_topic_ref(conn, project, topic_ref)
+    row = conn.execute(
+        "SELECT * FROM topics WHERE id = ? AND project_name = ?",
+        (resolved["canonical_id"], project),
+    ).fetchone()
+    if row is None:
+        raise ValidationError(
+            f"unknown topic: {topic_ref}", kind="topic_not_found"
+        )
+    return row
 
 
 def _blocking_topic_runs(
@@ -121,7 +217,7 @@ def coordinator_bind(
 
 
 def coordinator_show(project: str) -> dict[str, Any]:
-    conn = open_project_db(project, init=True)
+    conn = open_project_db(project, init=False)
     try:
         row = conn.execute(
             """
@@ -148,6 +244,7 @@ def topic_start(
     worktree_path: str | None = None,
     agent_name: str | None = None,
     brief: dict[str, Any] | None = None,
+    brief_file: str | None = None,
     provision_session: bool = False,
 ) -> dict[str, Any]:
     """Provision isolated branch+worktree. Does not enqueue. Session is optional."""
@@ -158,25 +255,13 @@ def topic_start(
             kind="topic_isolation_required",
             details={"branch": branch_name},
         )
+    if brief_file:
+        brief = _load_brief_file(project, brief_file)
 
     root = get_project_path(project)
     bare = root / BARE_DIR_NAME
-    dest = _topic_dest(root, agent_name, branch_name)
+    candidate_dest = _topic_dest(root, agent_name, branch_name)
     main_wt = (root / MAIN_WORKTREE_NAME).resolve()
-    if dest.resolve() == main_wt:
-        raise ValidationError(
-            "topic worktree cannot be main/",
-            kind="topic_isolation_required",
-            details={"path": str(dest)},
-        )
-    if worktree_path:
-        given = normalize_path(worktree_path, label="worktree_path")
-        if given != dest.resolve():
-            raise ValidationError(
-                "topic-start does not annotate an existing path; omit --worktree",
-                kind="topic_annotate_forbidden",
-                details={"computed": str(dest), "given": str(given)},
-            )
 
     lock = acquire(project_lock_path(project), command="topic-start", project=project)
     conn = open_project_db(project, init=True)
@@ -204,7 +289,29 @@ def topic_start(
         ).fetchone()
 
         registered = _registered_worktrees(bare)
+        if existing is not None:
+            dest = Path(
+                canonical_worktree_path(
+                    str(existing["worktree_path"]), label="worktree_path"
+                )
+            )
+        else:
+            dest = candidate_dest
         dest_key = dest.resolve()
+        if dest_key == main_wt:
+            raise ValidationError(
+                "topic worktree cannot be main/",
+                kind="topic_isolation_required",
+                details={"path": str(dest)},
+            )
+        if worktree_path:
+            given = normalize_path(worktree_path, label="worktree_path")
+            if given != dest_key:
+                raise ValidationError(
+                    "topic-start does not annotate an existing path; omit --worktree",
+                    kind="topic_annotate_forbidden",
+                    details={"computed": str(dest_key), "given": str(given)},
+                )
 
         if existing is None and dest_key in registered:
             raise ValidationError(
@@ -220,6 +327,11 @@ def topic_start(
             )
 
         now = utc_now_iso()
+        plan_stored = None
+        if brief:
+            plan_stored = str(brief.get("stored") or brief.get("plan_path") or "")
+            if plan_stored.startswith("brief:"):
+                plan_stored = plan_stored[len("brief:") :]
         if existing is not None:
             if existing["branch_name"] != branch_name or (
                 agent_name
@@ -231,14 +343,7 @@ def topic_start(
                     kind="topic_exists_conflict",
                     details={"topic_id": existing["id"]},
                 )
-            stored = (
-                normalize_path(existing["worktree_path"], label="worktree_path")
-                if existing["worktree_path"]
-                else None
-            )
-            listed = registered.get(dest_key) or (
-                registered.get(stored) if stored else None
-            )
+            listed = registered.get(dest_key)
             if listed is None:
                 raise ValidationError(
                     "topic row exists but git worktree list does not match; recovery",
@@ -256,12 +361,24 @@ def topic_start(
                     (agent_name, utc_now_iso(), tid, project),
                 )
                 conn.commit()
+            if plan_stored:
+                conn.execute(
+                    """
+                    UPDATE topics
+                    SET plan_path = ?,
+                        result_state = CASE
+                          WHEN result_state = 'none' THEN 'planning'
+                          ELSE result_state
+                        END,
+                        updated_at = ?
+                    WHERE id = ? AND project_name = ?
+                    """,
+                    (plan_stored, utc_now_iso(), tid, project),
+                )
+                conn.commit()
             created_wt = False
         else:
             tid = _new_id("topic")
-            plan_path = None
-            if brief:
-                plan_path = f"brief:{(brief.get('plan_path') or '')}"
             with immediate_transaction(conn) as c:
                 c.execute(
                     """
@@ -284,8 +401,8 @@ def topic_start(
                         branch_name,
                         canonical_worktree_path(str(dest)),
                         None,
-                        plan_path,
-                        "planning" if brief else "none",
+                        plan_stored,
+                        "planning" if plan_stored else "none",
                         agent_name,
                         now,
                         now,
@@ -362,10 +479,11 @@ def topic_start(
                 "refusing to mark topic active without a session",
                 kind="topic_session_required",
             )
+        wt_key = canonical_worktree_path(str(row["worktree_path"]))
         reg = load_registry() or {}
         locator = attach_locator(
             base_url=str(reg.get("base_url") or "http://127.0.0.1:4096"),
-            worktree_path=canonical_worktree_path(str(dest)),
+            worktree_path=wt_key,
             session_id=None,
         )
         return {
@@ -382,7 +500,7 @@ def topic_start(
 
 
 def topic_list(project: str, *, include_archived: bool = False) -> dict[str, Any]:
-    conn = open_project_db(project, init=True)
+    conn = open_project_db(project, init=False)
     try:
         if include_archived:
             rows = conn.execute(
@@ -404,14 +522,9 @@ def topic_list(project: str, *, include_archived: bool = False) -> dict[str, Any
 
 
 def topic_show(project: str, topic_id: str) -> dict[str, Any]:
-    conn = open_project_db(project, init=True)
+    conn = open_project_db(project, init=False)
     try:
-        row = conn.execute(
-            "SELECT * FROM topics WHERE id = ? AND project_name = ?",
-            (topic_id, project),
-        ).fetchone()
-        if row is None:
-            raise ValidationError(f"unknown topic: {topic_id}", kind="topic_not_found")
+        row = _load_topic(conn, project, topic_id)
         topic = {k: row[k] for k in row.keys()}
         run = None
         if topic.get("active_run_id"):
@@ -561,12 +674,8 @@ def topic_ready(
     lock = acquire(project_lock_path(project), command="topic-ready", project=project)
     conn = open_project_db(project, init=True)
     try:
-        row = conn.execute(
-            "SELECT * FROM topics WHERE id = ? AND project_name = ?",
-            (topic_id, project),
-        ).fetchone()
-        if row is None:
-            raise ValidationError(f"unknown topic: {topic_id}", kind="topic_not_found")
+        row = _load_topic(conn, project, topic_id)
+        topic_id = str(row["id"])
         verification = verification or {}
         required = ("commands", "commit_sha")
         missing = [k for k in required if k not in verification]
@@ -642,12 +751,8 @@ def topic_archive(project: str, topic_id: str) -> dict[str, Any]:
     )
     conn = open_project_db(project, init=True)
     try:
-        row = conn.execute(
-            "SELECT * FROM topics WHERE id = ? AND project_name = ?",
-            (topic_id, project),
-        ).fetchone()
-        if row is None:
-            raise ValidationError(f"unknown topic: {topic_id}", kind="topic_not_found")
+        row = _load_topic(conn, project, topic_id)
+        topic_id = str(row["id"])
         if row["lifecycle_state"] == "enqueued":
             task = conn.execute(
                 "SELECT status FROM tasks WHERE id = ?",
@@ -688,12 +793,8 @@ def topic_enqueue(project: str, topic_id: str, *, priority: int = 1) -> dict[str
     )
     conn = open_project_db(project, init=True)
     try:
-        row = conn.execute(
-            "SELECT * FROM topics WHERE id = ? AND project_name = ?",
-            (topic_id, project),
-        ).fetchone()
-        if row is None:
-            raise ValidationError(f"unknown topic: {topic_id}", kind="topic_not_found")
+        row = _load_topic(conn, project, topic_id)
+        topic_id = str(row["id"])
         if row["lifecycle_state"] == "enqueued" and row["task_id"]:
             task = conn.execute(
                 "SELECT * FROM tasks WHERE id = ?", (row["task_id"],)
@@ -772,12 +873,8 @@ def topic_abandon(project: str, topic_id: str) -> dict[str, Any]:
     )
     conn = open_project_db(project, init=True)
     try:
-        row = conn.execute(
-            "SELECT * FROM topics WHERE id = ? AND project_name = ?",
-            (topic_id, project),
-        ).fetchone()
-        if row is None:
-            raise ValidationError(f"unknown topic: {topic_id}", kind="topic_not_found")
+        row = _load_topic(conn, project, topic_id)
+        topic_id = str(row["id"])
         if row["lifecycle_state"] not in ("proposed", "active", "ready"):
             raise ValidationError(
                 f"cannot abandon topic in {row['lifecycle_state']}",

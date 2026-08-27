@@ -38,3 +38,9 @@ V16-001 canonical_worktree_path + 变体测试
 - **文件：** `orch/commands/cleanup.py` `_prune_one`；`tests/test_topic_cli_loop.py`；`docs/current-architecture.md`；Skill
 - **做：** Git 之前，活 Topic（`proposed|active|ready|enqueued`）→ `ok: False`, `reason`/`kind`: `topic_prune_blocked`，保留 worktree。Git gauntlet 不变。`tasks.archived_at` 的同一短事务把 `merged|rejected` Topic 标 `archived`（`last_step='prune'`）。不删 Topic 行。
 - **完成定义：** argv start → ready → enqueue → merge → backdate → `cleanup --prune`：WT 消失、Topic `archived`。漏回写为 `enqueued` 时 prune 拒绝、WT 仍在。无 Topic 的既有 prune 用例保持绿。
+
+---
+
+## 后续：V17
+
+权威修正案：[topic-closed-loop-v17-amendment.md](topic-closed-loop-v17-amendment.md)。先契约，再 CLI help / id-or-name / `doctor`，再 schema 5 与 runtime fencing。

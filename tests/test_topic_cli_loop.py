@@ -159,6 +159,7 @@ class TopicCliLoopTests(OrchEnvTestCase):
             Path(self._db_topic(topic_id)["worktree_path"]).resolve(),
             wt.resolve(),
         )
+        self.assertEqual(Path(again["attach"]["directory"]).resolve(), wt.resolve())
         enq = self._ok("topic-enqueue", topic_id)
         self.assertTrue(enq["enqueued"])
 
@@ -289,3 +290,156 @@ class TopicCliLoopTests(OrchEnvTestCase):
         self.assertEqual(results[task_id].get("kind"), "topic_prune_blocked")
         self.assertTrue(wt.exists())
         self.assertEqual(self._db_topic(topic_id)["lifecycle_state"], "enqueued")
+
+    def test_argv_topic_ready_enqueue_by_name(self) -> None:
+        started = self._ok(
+            "topic-start",
+            "named",
+            "--title",
+            "Named",
+            "--goal",
+            "ship",
+            "--branch",
+            "feat/named",
+            "--agent",
+            "coder",
+        )
+        topic_id = started["topic"]["id"]
+        wt = Path(started["topic"]["worktree_path"])
+        sha = commit_file(wt, "n.py", "n = 1\n")
+        ready = self._ok(
+            "topic-ready", "named", "--commit", sha, "--command", "pytest"
+        )
+        self.assertEqual(ready["topic_id"], topic_id)
+        enq = self._ok("topic-enqueue", "named")
+        self.assertEqual(enq["task_id"], self._db_topic(topic_id)["task_id"])
+        shown = self._ok("topic-show", "named")
+        self.assertEqual(shown["topic"]["id"], topic_id)
+
+    def test_argv_topic_ref_id_wins_over_name(self) -> None:
+        first = self._ok(
+            "topic-start",
+            "alphaone",
+            "--title",
+            "A",
+            "--goal",
+            "ship",
+            "--branch",
+            "feat/alphaone",
+            "--agent",
+            "coder",
+        )
+        first_id = first["topic"]["id"]
+        self._ok(
+            "topic-start",
+            first_id,
+            "--title",
+            "Collision",
+            "--goal",
+            "ship",
+            "--branch",
+            "feat/collision",
+            "--agent",
+            "coder",
+        )
+        shown = self._ok("topic-show", first_id)
+        self.assertEqual(shown["topic"]["id"], first_id)
+        self.assertEqual(shown["topic"]["name"], "alphaone")
+
+    def test_argv_ready_attestation_does_not_synthesize_exit_code(self) -> None:
+        started = self._ok(
+            "topic-start",
+            "attest",
+            "--title",
+            "Attest",
+            "--goal",
+            "ship",
+            "--branch",
+            "feat/attest",
+            "--agent",
+            "coder",
+        )
+        topic_id = started["topic"]["id"]
+        wt = Path(started["topic"]["worktree_path"])
+        sha = commit_file(wt, "t.py", "t = 1\n")
+        self._ok("topic-ready", topic_id, "--commit", sha, "--command", "pytest")
+        conn = open_project_db(self.project, init=False)
+        try:
+            row = conn.execute(
+                """
+                SELECT results_json FROM verification_records
+                WHERE topic_id = ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (topic_id,),
+            ).fetchone()
+            self.assertIsNotNone(row)
+            import json
+
+            results = json.loads(row["results_json"])
+            for item in results:
+                self.assertNotEqual(item.get("exit_code"), 0)
+                self.assertFalse(item.get("executed", True))
+                self.assertEqual(item.get("trust_model"), "attestation")
+        finally:
+            conn.close()
+
+    def test_argv_doctor_after_init(self) -> None:
+        data = self._ok("doctor")
+        self.assertEqual(data["schema"]["classify"], "v4")
+        self.assertEqual(data["conflicts"], [])
+        self.assertEqual(data["orphans"], [])
+
+    def test_argv_doctor_missing_database(self) -> None:
+        from orch.constants import project_db_path
+
+        project_db_path(self.project).unlink()
+        err = self._err("doctor")
+        self.assertEqual(err.get("kind"), "database_not_initialized")
+
+    def test_argv_brief_file_stores_path_and_digest(self) -> None:
+        import hashlib
+
+        brief = self.env.proj / "docs" / "plan.md"
+        brief.parent.mkdir(parents=True)
+        payload = b"# topic plan\n"
+        brief.write_bytes(payload)
+        started = self._ok(
+            "topic-start",
+            "briefed",
+            "--title",
+            "Briefed",
+            "--goal",
+            "ship",
+            "--branch",
+            "feat/briefed",
+            "--agent",
+            "coder",
+            "--brief-file",
+            "docs/plan.md",
+        )
+        plan_path = started["topic"]["plan_path"]
+        self.assertNotIn("brief:", plan_path)
+        digest = hashlib.sha256(payload).hexdigest()
+        self.assertIn(digest, plan_path)
+        self.assertIn("sha256:", plan_path)
+        self.assertTrue(plan_path.startswith(str(brief.resolve())) or digest in plan_path)
+        outsider = self.env.home / "outside.md"
+        outsider.write_text("nope\n", encoding="utf-8")
+        err = self._err(
+            "topic-start",
+            "outside",
+            "--title",
+            "Out",
+            "--goal",
+            "ship",
+            "--branch",
+            "feat/outside",
+            "--brief-file",
+            str(outsider),
+        )
+        self.assertEqual(err.get("kind"), "topic_brief_outside_root")
+
+
+if __name__ == "__main__":
+    unittest.main()

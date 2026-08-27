@@ -106,8 +106,8 @@ Rules:
 | Command | Lock |
 |---|---|
 | `init`, `worktree-add`, `enqueue`, `merge`, `retry`, `skip`, `reset-stuck`, `topic-start`, `topic-ready`, `topic-enqueue`, `topic-abandon`, `topic-archive`, `coordinator-bind` | project lock |
-| `list`, `pending`, `diff`, `changes`, `log`, `lock-status` | no |
-| `cleanup [--prune]` | yes when pruning |
+| `list`, `pending`, `diff`, `changes`, `log`, `lock-status`, `doctor`, `topic-list`, `topic-show` | no |
+| `cleanup [--prune]` / `topic-open --fork` / `agent-open --fork` | yes when the flag is set |
 | `lock-break --force` | guarded break |
 
 ### Agent / topic
@@ -119,8 +119,11 @@ Rules:
 | `agent-start\|stop\|reconcile\|archive` | lifecycle owner |
 | `agent-takeover\|release\|open` | single-writer lease |
 | `coordinator-bind\|show` | one active coordinator per project |
-| `topic-start|ready|enqueue|abandon|archive` | project lock; `topic-start` provisions a real branch + worktree. `--agent` does not start a session unless `--start-session` |
-| `topic-list|show|open` | read-only; no project lock |
+| `topic-start|ready|enqueue|abandon|archive` | project lock; `topic-start` provisions a real branch + worktree. `--agent` does not start a session unless `--start-session`. `--brief-file` is relative to the **project root** (not CWD) |
+| `topic-list|show` | read-only; no project lock; `TOPIC_ID_OR_NAME` (id wins over name; no fuzzy match) |
+| `topic-open` | read-only unless `--fork` (then project lock) |
+| `doctor` | read-only diagnose; does not migrate |
+| `topic-ready` | Git **attestation**; does not synthesize `exit_code=0` |
 | `remote-config\|probe\|status` | remote/provider config + read-only probe |
 | `promote-develop` / `promotion-*` | develop publish (CAS FF) |
 | `release-create\|status\|sync` | master Promotion PR + release-sync |

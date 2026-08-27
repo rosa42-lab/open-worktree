@@ -488,7 +488,9 @@ Runtime guard 始终先于 Git 删除操作，hook 也不能绕过内建 guard�
 
 产品路径（无 runtime 也可走完）：`topic-start --agent` 供给隔离（`--start-session` 才拉 OpenCode）→ `topic-ready`（Git 证据，不入队）→ `topic-enqueue`（verification SHA 必须等于 branch tip）→ `merge` / `retry` / `skip` / `reset-stuck` 回写 Topic。`merged` 只表示到达本地 `develop`。
 
-V16 已补：路径 canonicalize、run 退出清 `active_run_id`、`cleanup --prune` 拒绝活 Topic 并归档 merged Topic。见 [`docs/topic-closed-loop-v16-tasks.md`](topic-closed-loop-v16-tasks.md)。仍可选：CLI `--help` 锁表、id-or-name。
+V16 已补：路径 canonicalize、run 退出清 `active_run_id`、`cleanup --prune` 拒绝活 Topic 并归档 merged Topic。见 [`docs/topic-closed-loop-v16-tasks.md`](topic-closed-loop-v16-tasks.md)。
+
+V17+ 契约（schema 5 头版本、Saga、attestation、runtime 身份）以 [`docs/topic-closed-loop-v17-amendment.md`](topic-closed-loop-v17-amendment.md) 为权威，覆盖本文与 [`topic-closed-loop-plan.md`](topic-closed-loop-plan.md) 中冲突的旧句。V17 CLI：`doctor`、`TOPIC_ID_OR_NAME`、`--brief-file`、continue dest 冻结；schema 5 / runtime fencing 仍是后续刀。
 
 保持 `topic-ready` 与 enqueue 的显式边界：ready 永不入队。
 
