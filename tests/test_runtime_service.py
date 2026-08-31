@@ -67,6 +67,55 @@ class RuntimeStopGuardTests(unittest.TestCase):
                     runtime_stop(force=False)
                 self.assertEqual(ctx.exception.kind, "runtime_stop_blocked")
 
+    def test_stop_drains_then_fences_then_kills(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            orch_home = home / ".orchestrator"
+            (orch_home / "data" / "alpha").mkdir(parents=True)
+            rt = orch_home / "runtime"
+            rt.mkdir(parents=True)
+            store = [
+                {
+                    "managed_by_orch": True,
+                    "pid": 0,
+                    "hostname": "x",
+                    "base_url": "http://127.0.0.1:4096",
+                    "server_id": "srv",
+                    "state": "running",
+                }
+            ]
+            commands: list[str] = []
+
+            def rec_acquire(path, **kwargs):
+                commands.append(str(kwargs.get("command")))
+                return mock.Mock(
+                    path=Path(str(path)), token="t", payload={}, family=None
+                )
+
+            def load():
+                return dict(store[0])
+
+            def save(rec):
+                store[0] = dict(rec)
+
+            with mock.patch("pathlib.Path.home", return_value=home), \
+                 mock.patch("orch.runtime.service.runtime_lock_path", return_value=rt / "opencode.lock"), \
+                 mock.patch("orch.runtime.service.ensure_runtime_dirs"), \
+                 mock.patch("orch.runtime.service.load_registry", side_effect=load), \
+                 mock.patch("orch.runtime.service.save_registry", side_effect=save), \
+                 mock.patch("orch.runtime.service.count_active_agent_runs", return_value=0), \
+                 mock.patch("orch.runtime.service.acquire", side_effect=rec_acquire), \
+                 mock.patch("orch.runtime.service.release"), \
+                 mock.patch("orch.runtime.service.registry_owner_alive", return_value=False), \
+                 mock.patch("orch.runtime.service.public_registry_view", return_value={}):
+                out = runtime_stop(force=False)
+            self.assertEqual(out["action"], "stopped")
+            self.assertEqual(store[0]["state"], "stopped")
+            self.assertEqual(
+                commands,
+                ["runtime.stop", "runtime.stop.fence", "runtime.stop.kill"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

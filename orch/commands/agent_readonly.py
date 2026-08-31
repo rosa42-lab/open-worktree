@@ -15,8 +15,9 @@ from orch.agent_repo import (
 )
 from orch.db import open_project_db
 from orch.errors import ValidationError
+from orch.runtime.adapter import RuntimeAdapter
+from orch.runtime.factory import adapter_from_client
 from orch.runtime.http_client import OpenCodeHttpClient
-from orch.runtime.opencode import OpenCodeRuntimeAdapter
 
 WATCH_STREAM_SCHEMA = 1
 
@@ -131,7 +132,7 @@ def cmd_agent_watch(
     max_ticks: int = 1,
     as_jsonl: bool = False,
     stream: TextIO | None = None,
-    adapter: OpenCodeRuntimeAdapter | None = None,
+    adapter: RuntimeAdapter | None = None,
 ) -> dict[str, Any] | None:
     """
     Observe-only watch. Never sends abort/prompt/dispose/signal.
@@ -214,9 +215,9 @@ def build_observe_adapter(
     *,
     username: str | None = None,
     password: str | None = None,
-) -> OpenCodeRuntimeAdapter:
+) -> RuntimeAdapter:
     """Factory for optional live status reads (GET only)."""
     client = OpenCodeHttpClient(
         base_url, username=username, password=password
     )
-    return OpenCodeRuntimeAdapter(client)
+    return adapter_from_client(client)

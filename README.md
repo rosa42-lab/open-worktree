@@ -125,6 +125,13 @@ Full guide: [`docs/opencode-multi-session.md`](docs/opencode-multi-session.md)
 | Doc | Purpose |
 |-----|---------|
 | `docs/current-architecture.md` | Current architecture, implementation principles, gaps, and next-stage guidance |
+| `docs/topic-closed-loop-v17-amendment.md` | V17+ 合同权威；V17–V20 Class B 夹具已落地 |
+| `docs/topic-closed-loop-v18-plan.md` | V18 实施计划（schema 5 / 身份图 / Saga） |
+| `docs/topic-closed-loop-v19-plan.md` | V19 实施计划（adapter 注入） |
+| `docs/topic-closed-loop-v20-plan.md` | V20 Class B 实施计划（假二进制夹具；禁止 PATH `agent`） |
+| `docs/probe/claude-protocol.md` | Claude Class B protocol probe（旗标级；未付费 `--resume`） |
+| `docs/topic-continuous-dev-final.md` | 连续开发架构终稿 |
+| `docs/topic-continuous-dev-tasks.md` | Prep for the V20 executor plan (not a start-coding TDD list) |
 | `docs/usage-scenarios.md` | Visual end-to-end scenarios for merge queue and agent takeover workflows |
 | `docs/remote-branch-promotion-design.md` | Detailed design for develop promotion and protected master releases |
 | `docs/v1.3-tasks.md` | Phased implementation tasks and gates for remote branch promotion |

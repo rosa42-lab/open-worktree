@@ -17,7 +17,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from orch.runtime.adapter import CapabilityMatrix, OpenCodeRuntimeAdapter
+from orch.errors import ValidationError
+from orch.runtime.adapter import CapabilityMatrix
+from orch.runtime.factory import adapter_from_client
 from orch.runtime.http_client import HttpError, OpenCodeHttpClient
 from orch.runtime.process import (
     ManagedServer,
@@ -126,6 +128,10 @@ def _norm_path(p: str | Path) -> str:
     return os.path.normcase(os.path.abspath(str(p)))
 
 
+class _HealthOnly(Exception):
+    """Control flow: default probe stops after health/read-only checks."""
+
+
 def run_capability_probe(
     *,
     base_url: str | None = None,
@@ -133,6 +139,8 @@ def run_capability_probe(
     password: str | None = None,
     username: str | None = None,
     keep_server: bool = False,
+    probe_full: bool = False,
+    allow_external_full: bool = False,
 ) -> dict[str, Any]:
     """
     Execute Phase 0 capability probe.
@@ -215,7 +223,7 @@ def run_capability_probe(
         client = OpenCodeHttpClient(
             url, username=username or "opencode", password=probe_password
         )
-        adapter = OpenCodeRuntimeAdapter(client)
+        adapter = adapter_from_client(client)
 
         if probe_password:
             bad = OpenCodeHttpClient(url, username="opencode", password="wrong-password")
@@ -234,6 +242,14 @@ def run_capability_probe(
                     ok=True,
                     detail="skipped (no password configured on target server)",
                 )
+            )
+
+        if not probe_full:
+            raise _HealthOnly()
+        if base_url and not allow_external_full:
+            raise ValidationError(
+                "full probe against an external Server requires explicit authorization",
+                kind="runtime_probe_full_forbidden",
             )
 
         tmp_root = Path(tempfile.mkdtemp(prefix="orch-runtime-probe-"))
@@ -570,6 +586,10 @@ def run_capability_probe(
             )
         )
 
+    except _HealthOnly:
+        pass
+    except ValidationError:
+        raise
     except Exception as exc:  # noqa: BLE001
         checks.append(
             CheckResult(

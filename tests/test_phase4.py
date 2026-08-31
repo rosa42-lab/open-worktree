@@ -13,6 +13,7 @@ from orch.errors import ValidationError
 from orch.runtime.cleanup_guard import runtime_prune_blockers
 from orch.runtime.hooks import HOOK_ALLOWLIST, run_hook, validate_hook_argv
 from orch.commands.topic import coordinator_bind, topic_list, topic_ready, topic_start
+from tests.helpers.orch_env import OrchEnvTestCase
 
 
 class CleanupGuardTests(unittest.TestCase):
@@ -89,66 +90,38 @@ class HookTests(unittest.TestCase):
         self.assertEqual(ctx.exception.kind, "hook_blocking_failed")
 
 
-class TopicTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.home = Path(self.tmp.name)
-        self.project = "topicproj"
-        self.db_dir = self.home / ".orchestrator" / "data" / self.project
-        self.db_dir.mkdir(parents=True)
-        self.db_path = self.db_dir / "orchestrator.db"
-        self.lock_path = self.db_dir / "project.lock"
-        self.patches = [
-            mock.patch(
-                "orch.constants.project_db_path", return_value=self.db_path
-            ),
-            mock.patch(
-                "orch.constants.project_data_dir", return_value=self.db_dir
-            ),
-            mock.patch(
-                "orch.constants.project_lock_path", return_value=self.lock_path
-            ),
-            mock.patch(
-                "orch.commands.topic.project_lock_path", return_value=self.lock_path
-            ),
-        ]
-        for p in self.patches:
-            p.start()
-        conn = connect(self.db_path)
-        init_schema(conn)
-        conn.close()
-
-    def tearDown(self) -> None:
-        for p in self.patches:
-            p.stop()
-        self.tmp.cleanup()
-
+class TopicTests(OrchEnvTestCase):
     def test_coordinator_and_topic_flow(self) -> None:
-        with mock.patch("orch.commands.topic.load_registry", return_value={"server_id": "srv", "base_url": "http://127.0.0.1:4096"}):
-            coord = coordinator_bind(
-                self.project,
-                session_id="ses_coord",
-                directory="E:/proj",
-            )
-            self.assertEqual(coord["coordinator"]["state"], "active")
-            started = topic_start(
-                self.project,
-                name="auth",
-                title="Auth",
-                goal="ship auth",
-                branch_name="topic/auth",
-                worktree_path="E:/proj/worktrees/auth",
-            )
-            tid = started["topic"]["id"]
-            listed = topic_list(self.project)
-            self.assertEqual(len(listed["topics"]), 1)
-            ready = topic_ready(
-                self.project,
-                tid,
-                verification={"commit_sha": "abc", "commands": ["pytest"]},
-            )
-            self.assertFalse(ready["enqueued"])
-            self.assertEqual(ready["result_state"], "ready_for_enqueue")
+        coord = coordinator_bind(
+            self.project,
+            session_id="ses_coord",
+            directory=str(self.env.proj),
+        )
+        self.assertEqual(coord["coordinator"]["state"], "active")
+        started = topic_start(
+            self.project,
+            name="auth",
+            title="Auth",
+            goal="ship auth",
+            branch_name="topic/auth",
+            agent_name="coder",
+            provision_session=False,
+        )
+        self.assertEqual(started["topic"]["lifecycle_state"], "proposed")
+        self.assertNotEqual(started["topic"]["lifecycle_state"], "active")
+        tid = started["topic"]["id"]
+        listed = topic_list(self.project)
+        self.assertEqual(len(listed["topics"]), 1)
+        from tests.helpers.git_fixture import commit_file
+        from pathlib import Path as _Path
+        sha = commit_file(_Path(started["topic"]["worktree_path"]), "topic.txt", "topic work\n")
+        ready = topic_ready(
+            self.project,
+            tid,
+            verification={"commit_sha": sha, "commands": ["pytest"]},
+        )
+        self.assertFalse(ready["enqueued"])
+        self.assertEqual(ready["result_state"], "ready_for_enqueue")
 
 
 class TakeoverBusyTests(unittest.TestCase):

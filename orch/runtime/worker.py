@@ -12,9 +12,9 @@ from typing import Any
 
 from orch.agent_repo import get_run
 from orch.db import open_project_db
+from orch.runtime.factory import adapter_from_client
 from orch.runtime.http_client import OpenCodeHttpClient
 from orch.runtime.lease import assert_write_allowed
-from orch.runtime.opencode import OpenCodeRuntimeAdapter
 from orch.util import utc_now_iso
 
 HEARTBEAT_INTERVAL_SEC = 2.0
@@ -118,7 +118,7 @@ def worker_main(argv: list[str] | None = None) -> int:
 
     username, password = _load_password(cred_file)
     client = OpenCodeHttpClient(server_url, username=username, password=password)
-    adapter = OpenCodeRuntimeAdapter(client)
+    adapter = adapter_from_client(client)
 
     # Health + session reachability before first heartbeat
     adapter.health()

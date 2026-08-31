@@ -14,6 +14,7 @@ from orch.locks import acquire, release
 from orch.registry import get_project_path
 from orch.state_machine import assert_transition
 from orch.task_resolve import resolve_task
+from orch.topic_graph import assert_topic_graph, detach_live_runs
 from orch.util import utc_now_iso
 from orch.validate import validate_project_name
 
@@ -79,6 +80,23 @@ def cmd_skip(project: str, task_id: str, *, reason: str = "") -> dict[str, Any]:
                 task_id=task["id"],
                 detail={"reason": reason},
             )
+            linked = c.execute(
+                "SELECT id FROM topics WHERE task_id = ? AND lifecycle_state = 'enqueued'",
+                (task["id"],),
+            ).fetchone()
+            if linked is not None:
+                detach_live_runs(c, str(linked["id"]))
+            c.execute(
+                """
+                UPDATE topics
+                SET lifecycle_state = 'rejected', result_state = 'rejected',
+                    last_step = 'skip', task_id = NULL, updated_at = ?
+                WHERE task_id = ? AND lifecycle_state = 'enqueued'
+                """,
+                (finished, task["id"]),
+            )
+            if linked is not None:
+                assert_topic_graph(c, str(linked["id"]))
         return {"task_id": task["id"], "status": "skipped", "reason": reason}
     finally:
         if handle is not None:

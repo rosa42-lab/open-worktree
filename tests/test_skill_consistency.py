@@ -20,13 +20,23 @@ REQUIRED_SNIPPETS = [
     "coordinator-bind",
     "topic-start",
     "topic-ready",
+    "topic-enqueue",
+    "topic-abandon",
+    "--start-session",
+    "does NOT enqueue",
+    "topic_enqueue_required",
+    "topic_sha_frozen",
     "runtime_blocked",
+    "topic_prune_blocked",
     "develop",
     "1.3.0",
     "promote-develop",
     "release-sync",
     "remote-probe",
     "shell=False",
+    "doctor",
+    "TOPIC_ID_OR_NAME",
+    "--brief-file",
 ]
 
 
@@ -35,6 +45,10 @@ class SkillConsistencyTests(unittest.TestCase):
         text = SKILL.read_text(encoding="utf-8")
         missing = [s for s in REQUIRED_SNIPPETS if s not in text]
         self.assertEqual(missing, [], msg=f"SKILL.md missing: {missing}")
+
+    def test_skill_copies_are_identical(self) -> None:
+        other = ROOT / ".opencode" / "skills" / "orchestrator" / "SKILL.md"
+        self.assertEqual(SKILL.read_bytes(), other.read_bytes())
 
     def test_skill_keeps_v11_merge_invariants(self) -> None:
         text = SKILL.read_text(encoding="utf-8")

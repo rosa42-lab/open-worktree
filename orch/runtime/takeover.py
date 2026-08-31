@@ -16,9 +16,10 @@ from orch.constants import project_lock_path, runtime_credentials_path
 from orch.db import open_project_db
 from orch.errors import ValidationError
 from orch.locks import _pid_alive, acquire, release
+from orch.runtime.factory import adapter_from_client
+from orch.runtime.gate import assert_runtime_gate
 from orch.runtime.http_client import OpenCodeHttpClient
 from orch.runtime.lease import acquire_lease, assert_write_allowed, release_lease
-from orch.runtime.opencode import OpenCodeRuntimeAdapter
 from orch.runtime.registry import load_credentials, load_registry
 from orch.runtime.worker import spawn_worker_env
 from orch.util import utc_now_iso
@@ -27,7 +28,7 @@ IDLE_WAIT_SEC = 30.0
 WORKER_STOP_SEC = 10.0
 
 
-def _adapter() -> tuple[dict[str, Any], OpenCodeRuntimeAdapter]:
+def _adapter():
     reg = load_registry()
     if not reg or not reg.get("base_url"):
         raise ValidationError(
@@ -44,10 +45,10 @@ def _adapter() -> tuple[dict[str, Any], OpenCodeRuntimeAdapter]:
     client = OpenCodeHttpClient(
         str(reg["base_url"]), username=username, password=password
     )
-    return reg, OpenCodeRuntimeAdapter(client)
+    return reg, adapter_from_client(client)
 
 
-def _session_idle(adapter: OpenCodeRuntimeAdapter, directory: str) -> bool:
+def _session_idle(adapter, directory: str) -> bool:
     try:
         status = adapter.get_status(directory)
     except Exception:  # noqa: BLE001
@@ -60,7 +61,7 @@ def _session_idle(adapter: OpenCodeRuntimeAdapter, directory: str) -> bool:
     return False
 
 
-def fork_inspect(project: str, run_id: str) -> dict[str, Any]:
+def fork_inspect(project: str, run_id: str, *, launch: bool = False) -> dict[str, Any]:
     """Create inspection fork; does not change owner/generation/worker."""
     conn = open_project_db(project, init=True)
     try:
@@ -73,6 +74,9 @@ def fork_inspect(project: str, run_id: str) -> dict[str, Any]:
             raise ValidationError("run missing session/worktree", kind="run_incomplete")
 
         reg, adapter = _adapter()
+        assert_runtime_gate("fork", adapter.capabilities())
+        if launch:
+            assert_runtime_gate("attach_fork", adapter.capabilities())
         forked = adapter.fork_session(wt, session_id)
         fork_id = f"fork_{uuid.uuid4().hex[:16]}"
         now = utc_now_iso()
@@ -343,6 +347,9 @@ def release_control(
                 """,
                 (utc_now_iso(), utc_now_iso(), run_id),
             )
+            from orch.runtime.lifecycle import clear_topic_active_run
+
+            clear_topic_active_run(conn, run_id)
             conn.commit()
             return {
                 "mode": "release",
@@ -449,10 +456,10 @@ def agent_open(
 ) -> dict[str, Any]:
     """Return attach locator; launch only when --launch."""
     if fork:
-        out = fork_inspect(project, run_id)
+        out = fork_inspect(project, run_id, launch=launch)
         if launch and out.get("attach"):
             out["launched"] = _launch_attach(out["attach"]["command"])
-        else:
+        elif "launched" not in out:
             out["launched"] = False
         return out
 

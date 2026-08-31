@@ -15,6 +15,7 @@ from orch.locks import acquire, release
 from orch.registry import get_project_path
 from orch.state_machine import assert_transition
 from orch.task_resolve import resolve_task
+from orch.util import utc_now_iso
 from orch.validate import validate_project_name
 
 
@@ -116,6 +117,15 @@ def cmd_retry(project: str, task_id: str) -> dict[str, Any]:
                     "old_source_commit": old_source,
                     "new_source_commit": wt_head,
                 },
+            )
+            c.execute(
+                """
+                UPDATE topics
+                SET verification_record_id = NULL, last_step = 'retry',
+                    updated_at = ?
+                WHERE task_id = ? AND lifecycle_state = 'enqueued'
+                """,
+                (utc_now_iso(), task["id"]),
             )
         return {
             "task_id": task["id"],

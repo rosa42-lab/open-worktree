@@ -8,8 +8,11 @@ import traceback
 from typing import Any, Callable, Sequence
 
 from orch import __version__
+from orch.cli_spec import PROJECT_COMMANDS, PROJECT_SPECS, lock_for
 from orch.errors import ExitCode, OrchError, UsageError
 from orch.jsonio import emit_json, envelope_from_exception, success_envelope
+
+__all__ = ["PROJECT_COMMANDS", "lock_for", "main"]
 
 
 def _add_json(p: argparse.ArgumentParser) -> None:
@@ -33,56 +36,6 @@ def build_parser() -> argparse.ArgumentParser:
     # after a lightweight structure.
     return parser
 
-
-PROJECT_COMMANDS = frozenset(
-    {
-        "init",
-        "worktree-add",
-        "enqueue",
-        "list",
-        "pending",
-        "diff",
-        "changes",
-        "log",
-        "merge",
-        "retry",
-        "skip",
-        "reset-stuck",
-        "cleanup",
-        "lock-status",
-        "lock-break",
-        "agent-list",
-        "agent-show",
-        "agent-watch",
-        "agent-register",
-        "agent-start",
-        "agent-stop",
-        "agent-reconcile",
-        "agent-archive",
-        "agent-takeover",
-        "agent-release",
-        "agent-open",
-        "coordinator-bind",
-        "coordinator-show",
-        "topic-start",
-        "topic-list",
-        "topic-show",
-        "topic-open",
-        "topic-ready",
-        "topic-archive",
-        "remote-config",
-        "remote-probe",
-        "remote-status",
-        "promote-develop",
-        "promotion-list",
-        "promotion-show",
-        "promotion-reconcile",
-        "promotion-cancel",
-        "release-create",
-        "release-status",
-        "release-sync",
-    }
-)
 
 RUNTIME_COMMANDS = frozenset({"probe", "start", "status", "stop"})
 
@@ -138,6 +91,16 @@ def _parser_runtime_group() -> argparse.ArgumentParser:
         action="store_true",
         help="do not terminate managed Server after probe (for Desktop H2)",
     )
+    probe.add_argument(
+        "--probe-full",
+        action="store_true",
+        help="run mutating capability checks (create session / abort / dispose)",
+    )
+    probe.add_argument(
+        "--allow-external-full",
+        action="store_true",
+        help="authorize --probe-full against --base-url (external Server)",
+    )
     for name, help_ in (
         ("start", "start or reuse managed OpenCode Server"),
         ("status", "show runtime Server registry status"),
@@ -167,11 +130,14 @@ def _parser_for_project(project: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog=f"orch {project}")
     _add_json(p)
     sub = p.add_subparsers(dest="cmd", required=True)
-
-    def add(name: str, help_: str) -> argparse.ArgumentParser:
-        sp = sub.add_parser(name, help=help_)
+    parsers: dict[str, argparse.ArgumentParser] = {}
+    for spec in PROJECT_SPECS:
+        sp = sub.add_parser(spec.name, help=spec.help)
         _add_json(sp)
-        return sp
+        parsers[spec.name] = sp
+
+    def add(name: str, help_: str = "") -> argparse.ArgumentParser:
+        return parsers[name]
 
     add("init", "initialize main worktree and DB")
     w = add("worktree-add", "create agent worktree")
@@ -279,27 +245,52 @@ def _parser_for_project(project: str) -> argparse.ArgumentParser:
     cb.add_argument("--replace", action="store_true")
     add("coordinator-show", "show active coordinator binding")
 
-    ts = add("topic-start", "create a persistent topic under coordinator")
+    ts = add("topic-start", "provision isolated topic branch+worktree under coordinator")
     ts.add_argument("name")
     ts.add_argument("--title", required=True)
     ts.add_argument("--goal", required=True)
     ts.add_argument("--branch", required=True)
-    ts.add_argument("--worktree", required=True)
+    ts.add_argument(
+        "--agent",
+        default=None,
+        help="sets agent_name and dest prefix; does not start an OpenCode session",
+    )
+    ts.add_argument(
+        "--start-session",
+        action="store_true",
+        help="provision an OpenCode session/worker (requires --agent and a registered runtime)",
+    )
+    ts.add_argument(
+        "--worktree",
+        default=None,
+        help="deprecated; path is computed as worktrees/<agent>-<safe-branch>",
+    )
+    ts.add_argument(
+        "--brief-file",
+        default=None,
+        help="RFC/ADR/OpenSpec path relative to the project root (not CWD)",
+    )
 
     tl = add("topic-list", "list topics")
     tl.add_argument("--all", action="store_true")
     tsh = add("topic-show", "show topic + coordinator + run")
-    tsh.add_argument("topic_id")
+    tsh.add_argument("topic_ref", metavar="TOPIC_ID_OR_NAME")
     topen = add("topic-open", "open topic session locator")
-    topen.add_argument("topic_id")
+    topen.add_argument("topic_ref", metavar="TOPIC_ID_OR_NAME")
     topen.add_argument("--fork", action="store_true")
     topen.add_argument("--launch", action="store_true")
     tr = add("topic-ready", "mark topic ready_for_enqueue (no enqueue)")
-    tr.add_argument("topic_id")
+    tr.add_argument("topic_ref", metavar="TOPIC_ID_OR_NAME")
     tr.add_argument("--commit", required=True, help="verification commit SHA")
     tr.add_argument("--command", action="append", default=[], help="verification command")
+    te = add("topic-enqueue", "enqueue a ready topic (does not merge)")
+    te.add_argument("topic_ref", metavar="TOPIC_ID_OR_NAME")
+    te.add_argument("--priority", type=int, default=1)
+    tab = add("topic-abandon", "cancel a proposed/active/ready topic")
+    tab.add_argument("topic_ref", metavar="TOPIC_ID_OR_NAME")
     ta = add("topic-archive", "archive topic product record")
-    ta.add_argument("topic_id")
+    ta.add_argument("topic_ref", metavar="TOPIC_ID_OR_NAME")
+    add("doctor", "read-only diagnose of schema, topic graph, and runtime stale hints")
 
     rc = add("remote-config", "write non-secret remote/provider promotion config")
     rc.add_argument("--remote", default="origin")
@@ -400,6 +391,8 @@ def _dispatch_runtime(args: argparse.Namespace) -> tuple[str, Any]:
             password=getattr(args, "password", None),
             username=getattr(args, "username", None),
             keep_server=bool(getattr(args, "keep_server", False)),
+            probe_full=bool(getattr(args, "probe_full", False)),
+            allow_external_full=bool(getattr(args, "allow_external_full", False)),
         )
     if cmd == "start":
         from orch.commands.runtime import cmd_runtime_start
@@ -637,7 +630,10 @@ def _dispatch(args: argparse.Namespace, *, project: str | None) -> tuple[str, An
             title=args.title,
             goal=args.goal,
             branch_name=args.branch,
-            worktree_path=args.worktree,
+            worktree_path=getattr(args, "worktree", None),
+            agent_name=getattr(args, "agent", None),
+            provision_session=bool(getattr(args, "start_session", False)),
+            brief_file=getattr(args, "brief_file", None),
         )
     if cmd == "topic-list":
         from orch.commands.topic import topic_list
@@ -646,13 +642,13 @@ def _dispatch(args: argparse.Namespace, *, project: str | None) -> tuple[str, An
     if cmd == "topic-show":
         from orch.commands.topic import topic_show
 
-        return name, topic_show(project, args.topic_id)
+        return name, topic_show(project, args.topic_ref)
     if cmd == "topic-open":
         from orch.commands.topic import topic_open
 
         return name, topic_open(
             project,
-            args.topic_id,
+            args.topic_ref,
             fork=bool(getattr(args, "fork", False)),
             launch=bool(getattr(args, "launch", False)),
         )
@@ -661,16 +657,30 @@ def _dispatch(args: argparse.Namespace, *, project: str | None) -> tuple[str, An
 
         return name, topic_ready(
             project,
-            args.topic_id,
+            args.topic_ref,
             verification={
                 "commit_sha": args.commit,
                 "commands": list(getattr(args, "command", []) or []),
             },
         )
+    if cmd == "topic-enqueue":
+        from orch.commands.topic import topic_enqueue
+
+        return name, topic_enqueue(
+            project, args.topic_ref, priority=int(getattr(args, "priority", 1))
+        )
+    if cmd == "topic-abandon":
+        from orch.commands.topic import topic_abandon
+
+        return name, topic_abandon(project, args.topic_ref)
     if cmd == "topic-archive":
         from orch.commands.topic import topic_archive
 
-        return name, topic_archive(project, args.topic_id)
+        return name, topic_archive(project, args.topic_ref)
+    if cmd == "doctor":
+        from orch.commands.doctor import cmd_doctor
+
+        return name, cmd_doctor(project)
     if cmd == "remote-config":
         from orch.commands.remote import cmd_remote_config
 

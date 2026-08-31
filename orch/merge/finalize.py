@@ -10,12 +10,33 @@ from typing import Any
 from orch.audit import write_audit
 from orch.constants import BARE_DIR_NAME, MAIN_WORKTREE_NAME, TARGET_BRANCH
 from orch.db import immediate_transaction
+from orch.errors import ValidationError
 from orch.git.ref import run_git_ref
 from orch.git.worktree import run_git_worktree
 from orch.merge.do import capture_conflict_files, is_merge_conflict
 from orch.git._runner import GitResult
 from orch.state_machine import assert_transition
+from orch.topic_graph import assert_topic_graph
 from orch.util import utc_now_iso
+
+
+def writeback_topic_merged(
+    conn: sqlite3.Connection, task_id: str, finished: str
+) -> None:
+    cur = conn.execute(
+        """
+        UPDATE topics
+        SET lifecycle_state = 'merged', last_step = 'merge', updated_at = ?
+        WHERE task_id = ? AND lifecycle_state = 'enqueued'
+        """,
+        (finished, task_id),
+    )
+    if cur.rowcount not in (0, 1):
+        raise ValidationError(
+            "topic merge writeback affected unexpected rows",
+            kind="topic_merge_writeback_failed",
+            details={"rowcount": cur.rowcount, "task_id": task_id},
+        )
 
 
 def post_check_success(root: Path, bare: Path, source_commit: str) -> tuple[bool, str]:
@@ -50,26 +71,38 @@ def finalize_success(
     if not ok:
         return finalize_recovery(conn, task, reason)
     finished = utc_now_iso()
-    with immediate_transaction(conn) as c:
-        assert_transition("merging", "merged")
-        c.execute(
-            """
-            UPDATE tasks SET
-              status = 'merged',
-              merged_commit = ?,
-              finished_at = ?,
-              last_error = NULL,
-              conflict_files = NULL
-            WHERE id = ?
-            """,
-            (head, finished, task["id"]),
-        )
-        write_audit(
-            c,
-            "merge_succeeded",
-            task_id=task["id"],
-            detail={"merged_commit": head},
-        )
+    try:
+        with immediate_transaction(conn) as c:
+            assert_transition("merging", "merged")
+            c.execute(
+                """
+                UPDATE tasks SET
+                  status = 'merged',
+                  merged_commit = ?,
+                  finished_at = ?,
+                  last_error = NULL,
+                  conflict_files = NULL
+                WHERE id = ?
+                """,
+                (head, finished, task["id"]),
+            )
+            write_audit(
+                c,
+                "merge_succeeded",
+                task_id=task["id"],
+                detail={"merged_commit": head},
+            )
+            writeback_topic_merged(c, task["id"], finished)
+            topic = c.execute(
+                "SELECT id FROM topics WHERE task_id = ?",
+                (task["id"],),
+            ).fetchone()
+            if topic is not None:
+                assert_topic_graph(c, str(topic["id"]))
+    except ValidationError as exc:
+        if exc.kind == "topic_graph_conflict":
+            return finalize_recovery(conn, task, exc.message)
+        raise
     return {"status": "merged", "merged_commit": head, "task_id": task["id"]}
 
 

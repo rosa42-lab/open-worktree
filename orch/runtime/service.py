@@ -13,6 +13,7 @@ from orch.constants import (
     DEFAULT_RUNTIME_HOST,
     DEFAULT_RUNTIME_PORT,
     DEFAULT_RUNTIME_USERNAME,
+    project_lock_path,
 )
 from orch.errors import ValidationError
 from orch.locks import _pid_alive, acquire, release
@@ -283,9 +284,33 @@ def _start_managed(
     }
 
 
+def _fence_projects() -> None:
+    """Acquire then release each project.lock without holding runtime.lock."""
+    from orch.constants import orchestrator_home
+
+    data = orchestrator_home() / "data"
+    if not data.is_dir():
+        return
+    for name in sorted(p.name for p in data.iterdir() if p.is_dir()):
+        handle = acquire(
+            project_lock_path(name),
+            command="runtime.stop.fence",
+            project=name,
+        )
+        release(handle)
+
+
 def runtime_stop(*, force: bool = False) -> dict[str, Any]:
-    """Stop orch-managed Server only. Never kill external/unknown owners."""
+    """Stop orch-managed Server only. Never kill external/unknown owners.
+
+    Holds runtime.lock only to mark draining / to kill. Project fencing happens
+    in between so project.lock and runtime.lock are never held together.
+    """
     ensure_runtime_dirs()
+    kill_pid = 0
+    kill_host = ""
+    kill_base = ""
+    phase = "abort"
     handle = acquire(runtime_lock_path(), command="runtime.stop", project=None)
     try:
         active = count_active_agent_runs()
@@ -298,6 +323,7 @@ def runtime_stop(*, force: bool = False) -> dict[str, Any]:
 
         reg = load_registry()
         if reg is None:
+            phase = "noop"
             return {"action": "noop", "reason": "no registry"}
 
         if not reg.get("managed_by_orch"):
@@ -307,10 +333,38 @@ def runtime_stop(*, force: bool = False) -> dict[str, Any]:
                 details={"server_id": reg.get("server_id")},
             )
 
-        pid = int(reg.get("pid") or 0)
-        host = str(reg.get("hostname") or "")
+        draining = dict(reg)
+        draining["state"] = "draining"
+        save_registry(draining)
+        kill_pid = int(reg.get("pid") or 0)
+        kill_host = str(reg.get("hostname") or "")
+        kill_base = str(reg.get("base_url") or "")
+        phase = "kill"
+    finally:
+        release(handle)
+
+    if phase == "noop":
+        return {"action": "noop", "reason": "no registry"}
+    if phase != "kill":
+        return {"action": "aborted"}
+
+    _fence_projects()
+
+    handle = acquire(runtime_lock_path(), command="runtime.stop.kill", project=None)
+    try:
+        reg = load_registry()
+        if reg is None:
+            return {"action": "noop", "reason": "no registry"}
+        if not reg.get("managed_by_orch"):
+            raise RuntimeRegistryError(
+                "refusing to stop external/unmanaged Server",
+                kind="runtime_stop_external",
+                details={"server_id": reg.get("server_id")},
+            )
+        pid = int(reg.get("pid") or 0) or kill_pid
+        host = str(reg.get("hostname") or "") or kill_host
         if registry_owner_alive(reg) is True and pid > 0:
-            base_url = str(reg.get("base_url") or "")
+            base_url = str(reg.get("base_url") or "") or kill_base
             try:
                 host_u, port_u = _parse_base_url(base_url)
             except Exception:  # noqa: BLE001
