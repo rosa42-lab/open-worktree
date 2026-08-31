@@ -16,11 +16,14 @@ def cmd_runtime_probe(
     password: str | None = None,
     username: str | None = None,
     keep_server: bool = False,
+    probe_full: bool = False,
+    allow_external_full: bool = False,
 ) -> dict[str, Any]:
     """
     Probe OpenCode Server capabilities.
 
     Does not take project lock, write project DB, or mutate orch-managed Git.
+    Default is health/read-only. Mutating checks require --probe-full.
     """
     return run_capability_probe(
         base_url=base_url,
@@ -28,6 +31,8 @@ def cmd_runtime_probe(
         password=password,
         username=username,
         keep_server=keep_server,
+        probe_full=probe_full,
+        allow_external_full=allow_external_full,
     )
 
 

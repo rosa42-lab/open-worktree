@@ -12,6 +12,7 @@ from orch.migrations import (
     SCHEMA_VERSION,
     SCHEMA_V3,
     SCHEMA_V4,
+    SCHEMA_V5,
     classify_db,
     ensure_schema,
     is_v3_complete,
@@ -30,11 +31,11 @@ class MigrationV14Tests(unittest.TestCase):
             conn = connect(Path(td) / "empty.db")
             result = ensure_schema(conn)
             self.assertEqual(result["action"], "init")
-            self.assertEqual(user_version(conn), SCHEMA_V4)
-            self.assertEqual(SCHEMA_VERSION, SCHEMA_V4)
-            self.assertTrue(is_v3_complete(conn), "v4 DB must still count as v3-complete")
+            self.assertEqual(user_version(conn), SCHEMA_V5)
+            self.assertEqual(SCHEMA_VERSION, SCHEMA_V5)
+            self.assertTrue(is_v3_complete(conn), "v5 DB must still count as v3-complete")
             self.assertTrue(is_v4_complete(conn))
-            self.assertEqual(classify_db(conn), "v4")
+            self.assertEqual(classify_db(conn), "v5")
             tables = _table_names(conn)
             self.assertNotIn("topic_events", tables)
             topic_cols = _columns(conn, "topics")

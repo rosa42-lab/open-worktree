@@ -91,6 +91,16 @@ def _parser_runtime_group() -> argparse.ArgumentParser:
         action="store_true",
         help="do not terminate managed Server after probe (for Desktop H2)",
     )
+    probe.add_argument(
+        "--probe-full",
+        action="store_true",
+        help="run mutating capability checks (create session / abort / dispose)",
+    )
+    probe.add_argument(
+        "--allow-external-full",
+        action="store_true",
+        help="authorize --probe-full against --base-url (external Server)",
+    )
     for name, help_ in (
         ("start", "start or reuse managed OpenCode Server"),
         ("status", "show runtime Server registry status"),
@@ -381,6 +391,8 @@ def _dispatch_runtime(args: argparse.Namespace) -> tuple[str, Any]:
             password=getattr(args, "password", None),
             username=getattr(args, "username", None),
             keep_server=bool(getattr(args, "keep_server", False)),
+            probe_full=bool(getattr(args, "probe_full", False)),
+            allow_external_full=bool(getattr(args, "allow_external_full", False)),
         )
     if cmd == "start":
         from orch.commands.runtime import cmd_runtime_start

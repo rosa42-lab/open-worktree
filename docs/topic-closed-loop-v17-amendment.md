@@ -1,8 +1,8 @@
 # Topic 闭环 V17 修正案（权威）
 
 > **优先级：** 本文与 [topic-closed-loop-plan.md](topic-closed-loop-plan.md) **§0 KEEP** 冲突时，**以本文为准**。KEEP 中未点名的产品语义（ready ≠ enqueue ≠ merge ≠ deployed；不 ALTER `tasks`；不建 `topic_events` 事件源；Git 不进 `BEGIN`；UNIQUE 墓碑；无第三把 WT 文件锁；`merged` = 本地 `develop`）继续有效。  
-> **状态：** Phase 0 契约冻结。实现顺序：本文合入 → V17 CLI → V18 schema 5 / 图 / Saga 列 → V19 runtime。禁止跳过本文直接编码 V18/V19。  
-> **基线：** schema **4** 已落地（V14–V16）。头版本目标 **schema 5**。CLI 闭环命令已存在，不重做。
+> **状态：** V17 CLI、V18（schema 5 + 身份图）、V19（adapter 注入）、V20 Class B Claude 夹具已落地。Grok/Codex adapter 与付费 Claude `--resume` 真往返仍未接。禁止永续 CLI 壳。专题连续开发见 [topic-continuous-dev-final.md](topic-continuous-dev-final.md)；预备：[topic-continuous-dev-tasks.md](topic-continuous-dev-tasks.md)。  
+> **基线：** schema **5** 已落地。V17 CLI 已存在，不重做。
 
 实现者：先读本文，再读 §0，再读 [`.cursor/plans` V17 方案](../../.cursor/plans/) 或仓库任务清单。
 

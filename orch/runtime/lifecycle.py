@@ -19,9 +19,11 @@ from orch.constants import project_lock_path, runtime_credentials_path
 from orch.db import open_project_db
 from orch.errors import ValidationError
 from orch.locks import _pid_alive, acquire, release
+from orch.runtime.factory import adapter_from_client, class_for_kind
+from orch.runtime.gate import assert_runtime_gate
+from orch.runtime.adapter import RuntimeAdapter
 from orch.runtime.http_client import OpenCodeHttpClient
 from orch.runtime.lease import acquire_lease, release_lease
-from orch.runtime.opencode import OpenCodeRuntimeAdapter
 from orch.runtime.registry import load_credentials, load_registry, public_registry_view
 from orch.runtime.worker import spawn_worker_env
 from orch.util import utc_now_iso
@@ -75,8 +77,14 @@ def clear_topic_active_run(conn: Any, run_id: str) -> None:
 
 
 class AgentLifecycleService:
-    def __init__(self, project: str) -> None:
+    def __init__(
+        self,
+        project: str,
+        *,
+        adapter: RuntimeAdapter | None = None,
+    ) -> None:
         self.project = project
+        self._adapter = adapter
 
     def start(
         self,
@@ -88,9 +96,11 @@ class AgentLifecycleService:
         session_id: str | None = None,
         create_session: bool = True,
         topic_id: str | None = None,
+        runtime_kind: str = "opencode",
+        executor_path: str | None = None,
     ) -> dict[str, Any]:
         """
-        Precheck -> Register -> Start worker -> Finalize on first heartbeat.
+        Precheck -> Register -> Start worker (Class A) or headless slice (Class B).
         """
         lock = acquire(
             project_lock_path(self.project),
@@ -108,6 +118,8 @@ class AgentLifecycleService:
                 session_id=session_id,
                 create_session=create_session,
                 topic_id=topic_id,
+                runtime_kind=runtime_kind,
+                executor_path=executor_path,
             )
         finally:
             conn.close()
@@ -124,56 +136,60 @@ class AgentLifecycleService:
         session_id: str | None = None,
         create_session: bool = True,
         topic_id: str | None = None,
+        runtime_kind: str = "opencode",
+        executor_path: str | None = None,
     ) -> dict[str, Any]:
         """Same as start() but caller already holds project.lock."""
         import sqlite3
 
         worktree_path = canonical_worktree_path(worktree_path)
-        reg = load_registry()
-        if not reg or not reg.get("base_url"):
-            raise ValidationError(
-                "runtime Server not registered; run: orch runtime start",
-                kind="runtime_not_ready",
+        self._assert_start_prechecks(conn, worktree_path)
+        exec_class = class_for_kind(runtime_kind)
+        if exec_class == "B":
+            return self._start_class_b_unlocked(
+                conn,
+                agent=agent,
+                branch=branch,
+                worktree_path=worktree_path,
+                prompt=prompt,
+                session_id=session_id,
+                topic_id=topic_id,
+                runtime_kind=runtime_kind,
+                executor_path=executor_path,
             )
-        creds = load_credentials()
-        if not creds or creds.get("server_id") != reg.get("server_id"):
-            raise ValidationError(
-                "runtime credentials missing or mismatched",
-                kind="runtime_credentials_missing",
-            )
-
-        # Precheck: no other active run on worktree
-        for row in list_runs(conn, self.project):
-            stored = row.get("worktree_path")
-            same_wt = stored is not None and canonical_worktree_path(
-                str(stored)
-            ) == worktree_path
-            if same_wt and row.get("state") in CLEANUP_BLOCKING_LIFECYCLE:
+        if self._adapter is not None:
+            adapter = self._adapter
+            reg = load_registry() or {
+                "base_url": "http://127.0.0.1:9",
+                "server_id": "injected",
+            }
+        else:
+            reg = load_registry()
+            if not reg or not reg.get("base_url"):
                 raise ValidationError(
-                    f"worktree already owned by active run {row['id']}",
-                    kind="agent_worktree_busy",
-                    details={"run_id": row["id"]},
+                    "runtime Server not registered; run: orch runtime start",
+                    kind="runtime_not_ready",
+                )
+            creds = load_credentials()
+            if not creds or creds.get("server_id") != reg.get("server_id"):
+                raise ValidationError(
+                    "runtime credentials missing or mismatched",
+                    kind="runtime_credentials_missing",
                 )
 
-        frozen = find_frozen_topic(conn, self.project, worktree_path)
-        if frozen is not None and frozen["task_status"] in ("pending", "merging"):
-            raise ValidationError(
-                "enqueued topic worktree is frozen until merge, skip, or conflict",
-                kind="topic_sha_frozen",
-                details={
-                    "topic_id": frozen["topic_id"],
-                    "task_status": frozen["task_status"],
-                },
+            username = str(creds.get("username") or "opencode")
+            password = creds.get("password")
+            if password == "":
+                password = None
+            client = OpenCodeHttpClient(
+                str(reg["base_url"]), username=username, password=password
             )
+            adapter = adapter_from_client(client)
 
-        username = str(creds.get("username") or "opencode")
-        password = creds.get("password")
-        if password == "":
-            password = None
-        client = OpenCodeHttpClient(
-            str(reg["base_url"]), username=username, password=password
-        )
-        adapter = OpenCodeRuntimeAdapter(client)
+        matrix = adapter.capabilities()
+        assert_runtime_gate("agent_start", matrix)
+        if prompt:
+            assert_runtime_gate("agent_start_prompt", matrix)
 
         if session_id is None and create_session:
             sess = adapter.create_session(
@@ -187,6 +203,13 @@ class AgentLifecycleService:
         now = utc_now_iso()
         generation = 1
         nonce = secrets.token_urlsafe(16)
+        runtime_version = ""
+        try:
+            health = adapter.health()
+            runtime_version = str(health.get("version") or "")
+        except Exception:  # noqa: BLE001
+            runtime_version = ""
+        cap_digest = matrix.digest()
         try:
             conn.execute(
                 """
@@ -195,9 +218,9 @@ class AgentLifecycleService:
                   task_id, topic_id, runtime_kind, runtime_server_id, session_id,
                   state, desired_state, observed_state, controller,
                   controller_generation, worker_nonce, created_at, updated_at,
-                  started_at
+                  started_at, capability_digest, runtime_version
                 ) VALUES (?,?,?,?,?, NULL,?,?,?,?,'registered','running','starting','agent',
-                  ?,?,?,?,?)
+                  ?,?,?,?,?,?,?)
                 """,
                 (
                     run_id,
@@ -214,6 +237,8 @@ class AgentLifecycleService:
                     now,
                     now,
                     now,
+                    cap_digest,
+                    runtime_version,
                 ),
             )
         except sqlite3.IntegrityError as exc:
@@ -312,6 +337,153 @@ class AgentLifecycleService:
             "run": self._public_run(row),
             "finalized": True,
             "registry": public_registry_view(reg),
+        }
+
+    def _assert_start_prechecks(self, conn: Any, worktree_path: str) -> None:
+        for row in list_runs(conn, self.project):
+            stored = row.get("worktree_path")
+            same_wt = stored is not None and canonical_worktree_path(
+                str(stored)
+            ) == worktree_path
+            if same_wt and row.get("state") in CLEANUP_BLOCKING_LIFECYCLE:
+                raise ValidationError(
+                    f"worktree already owned by active run {row['id']}",
+                    kind="agent_worktree_busy",
+                    details={"run_id": row["id"]},
+                )
+        frozen = find_frozen_topic(conn, self.project, worktree_path)
+        if frozen is not None and frozen["task_status"] in ("pending", "merging"):
+            raise ValidationError(
+                "enqueued topic worktree is frozen until merge, skip, or conflict",
+                kind="topic_sha_frozen",
+                details={
+                    "topic_id": frozen["topic_id"],
+                    "task_status": frozen["task_status"],
+                },
+            )
+
+    def _start_class_b_unlocked(
+        self,
+        conn: Any,
+        *,
+        agent: str,
+        branch: str,
+        worktree_path: str,
+        prompt: str | None,
+        session_id: str | None,
+        topic_id: str | None,
+        runtime_kind: str,
+        executor_path: str | None,
+    ) -> dict[str, Any]:
+        """Headless slice: spawn, wait, record resume id. Never starts the SSE worker."""
+        import sqlite3
+
+        from orch.runtime.adapter import CapabilityMatrix
+        from orch.runtime.claude import run_slice
+
+        if not (prompt or "").strip():
+            raise ValidationError(
+                "Class B slice requires a prompt",
+                kind="runtime_slice_prompt_required",
+            )
+        if not executor_path:
+            raise ValidationError(
+                "Class B requires an absolute executor path",
+                kind="runtime_binary_not_absolute",
+            )
+
+        run_id = new_run_id()
+        now = utc_now_iso()
+        generation = 1
+        nonce = secrets.token_urlsafe(16)
+        cap_digest = CapabilityMatrix.unknown().digest()
+        try:
+            conn.execute(
+                """
+                INSERT INTO agent_runs (
+                  id, project_name, agent_name, branch_name, worktree_path,
+                  task_id, topic_id, runtime_kind, runtime_server_id, session_id,
+                  state, desired_state, observed_state, controller,
+                  controller_generation, worker_nonce, created_at, updated_at,
+                  started_at, capability_digest, runtime_version
+                ) VALUES (?,?,?,?,?, NULL,?,?,?,?,'registered','stopped','starting','agent',
+                  ?,?,?,?,?,?,?)
+                """,
+                (
+                    run_id,
+                    self.project,
+                    agent,
+                    branch,
+                    worktree_path,
+                    topic_id,
+                    runtime_kind,
+                    "class-b",
+                    session_id,
+                    generation,
+                    nonce,
+                    now,
+                    now,
+                    now,
+                    cap_digest,
+                    "",
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValidationError(
+                f"topic already has an active run: {topic_id}",
+                kind="topic_run_active",
+                details={"topic_id": topic_id, "error": str(exc)},
+            ) from exc
+        conn.execute(
+            "INSERT INTO lifecycle_counters(run_id, value) VALUES (?, 0)",
+            (run_id,),
+        )
+        conn.commit()
+        self._set_state(conn, run_id, "starting")
+
+        try:
+            result = run_slice(
+                kind=runtime_kind,
+                binary=executor_path,
+                prompt=str(prompt),
+                session_id=session_id,
+                cwd=worktree_path,
+            )
+        except ValidationError as exc:
+            conn.execute(
+                """
+                UPDATE agent_runs
+                SET last_error = ?, exit_code = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    str(exc)[:2000],
+                    exc.details.get("exit_code"),
+                    utc_now_iso(),
+                    run_id,
+                ),
+            )
+            conn.commit()
+            self._set_state(conn, run_id, "lost")
+            raise
+
+        self._set_state(conn, run_id, "stopping")
+        self._set_state(conn, run_id, "exited")
+        finished = utc_now_iso()
+        conn.execute(
+            """
+            UPDATE agent_runs
+            SET session_id = ?, observed_state = 'exited', desired_state = 'stopped',
+                controller = 'none', finished_at = ?, exit_code = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (result.session_id, finished, result.exit_code, finished, run_id),
+        )
+        conn.commit()
+        return {
+            "run": self._public_run(get_run(conn, run_id)),
+            "finalized": True,
+            "class": "B",
         }
 
     def stop(self, run_id: str, *, force_after_sec: float = 5.0) -> dict[str, Any]:

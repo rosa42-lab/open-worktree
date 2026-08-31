@@ -65,7 +65,7 @@ def cmd_agent_takeover(
     launch: bool = False,
 ) -> dict[str, Any]:
     if fork:
-        return fork_inspect(project, run_id)
+        return fork_inspect(project, run_id, launch=launch)
     return direct_takeover(project, run_id, launch=launch)
 
 

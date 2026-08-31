@@ -351,6 +351,9 @@ def topic_start(
                     details={"topic_id": existing["id"], "path": str(dest)},
                 )
             tid = str(existing["id"])
+            from orch.topic_graph import assert_topic_graph
+
+            assert_topic_graph(conn, tid)
             if agent_name and not existing["agent_name"]:
                 conn.execute(
                     """
@@ -387,8 +390,9 @@ def topic_start(
                       coordinator_session_id, coordinator_generation,
                       branch_name, worktree_path, active_run_id, plan_path,
                       lifecycle_state, result_state, agent_name,
-                      last_step, created_at, updated_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?, 'proposed', ?, ?, 'record', ?, ?)
+                      last_step, provision_op_id, provision_phase,
+                      created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?, 'proposed', ?, ?, 'record', ?, 'record', ?, ?)
                     """,
                     (
                         tid,
@@ -404,6 +408,7 @@ def topic_start(
                         plan_stored,
                         "planning" if plan_stored else "none",
                         agent_name,
+                        _new_id("prov"),
                         now,
                         now,
                     ),
@@ -411,18 +416,38 @@ def topic_start(
 
             from orch.commands.worktree_add import worktree_add_unlocked
 
-            added = worktree_add_unlocked(
-                project, agent_name or "topic", branch_name, dest=dest
-            )
+            try:
+                added = worktree_add_unlocked(
+                    project, agent_name or "topic", branch_name, dest=dest
+                )
+            except Exception as exc:  # noqa: BLE001
+                with immediate_transaction(conn) as c:
+                    c.execute(
+                        """
+                        UPDATE topics
+                        SET provision_phase = 'needs_recovery',
+                            last_step = 'compensating',
+                            last_error = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (str(exc)[:2000], utc_now_iso(), tid),
+                    )
+                raise
             with immediate_transaction(conn) as c:
                 c.execute(
                     """
                     UPDATE topics
                     SET base_commit = ?, worktree_path = ?, last_step = 'worktree',
-                        updated_at = ?
+                        provision_phase = 'worktree', updated_at = ?
                     WHERE id = ?
                     """,
-                    (added["base_sha"], canonical_worktree_path(added["worktree_path"]), utc_now_iso(), tid),
+                    (
+                        added["base_sha"],
+                        canonical_worktree_path(added["worktree_path"]),
+                        utc_now_iso(),
+                        tid,
+                    ),
                 )
             created_wt = True
 
@@ -467,18 +492,41 @@ def topic_start(
                     UPDATE topics
                     SET active_run_id = ?, lifecycle_state = 'active',
                         last_step = 'agent', result_state = 'implementing',
-                        updated_at = ?
+                        provision_phase = 'session', updated_at = ?
                     WHERE id = ?
                     """,
                     (run_id, utc_now_iso(), tid),
                 )
 
+        with immediate_transaction(conn) as c:
+            c.execute(
+                """
+                UPDATE topics
+                SET provision_phase = CASE
+                      WHEN provision_phase IN ('needs_recovery', 'compensating')
+                        THEN provision_phase
+                      ELSE 'done'
+                    END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (utc_now_iso(), tid),
+            )
+
         row = conn.execute("SELECT * FROM topics WHERE id = ?", (tid,)).fetchone()
-        if not provision_session and row["lifecycle_state"] == "active":
+        prior = None if existing is None else str(existing["lifecycle_state"])
+        if (
+            not provision_session
+            and row["lifecycle_state"] == "active"
+            and prior != "active"
+        ):
             raise ValidationError(
                 "refusing to mark topic active without a session",
                 kind="topic_session_required",
             )
+        from orch.topic_graph import assert_topic_graph
+
+        assert_topic_graph(conn, tid)
         wt_key = canonical_worktree_path(str(row["worktree_path"]))
         reg = load_registry() or {}
         locator = attach_locator(
@@ -553,7 +601,7 @@ def topic_open(
     run_id = (shown.get("topic") or {}).get("active_run_id")
     if run_id:
         if fork:
-            return fork_inspect(project, run_id)
+            return fork_inspect(project, run_id, launch=launch)
         return agent_open(project, run_id, fork=False, launch=launch)
     reg = load_registry() or {}
     wt = shown["topic"]["worktree_path"]
@@ -694,6 +742,13 @@ def topic_ready(
         _assert_topic_ready_lifecycle(row)
         _assert_topic_not_ready_frozen(conn, row)
         _assert_ready_git_evidence(project, row, commit_sha)
+        from orch.topic_graph import assert_topic_graph
+
+        assert_topic_graph(conn, topic_id)
+        root = get_project_path(project)
+        develop_sha = run_git_ref(
+            ["rev-parse", TARGET_BRANCH], root / BARE_DIR_NAME, check=True
+        ).stdout.strip()
         now = utc_now_iso()
         from orch.verification.service import create_from_topic_ready
 
@@ -714,12 +769,14 @@ def topic_ready(
             SET lifecycle_state = ?,
                 result_state = 'ready_for_enqueue',
                 verification_record_id = ?,
+                verified_against_base = ?,
                 last_step = 'ready',
                 updated_at = ?
             WHERE id = ?
             """,
-            (new_lifecycle, record["id"], now, topic_id),
+            (new_lifecycle, record["id"], develop_sha, now, topic_id),
         )
+        assert_topic_graph(conn, topic_id)
         conn.commit()
         return {
             "topic_id": topic_id,
@@ -840,6 +897,23 @@ def topic_enqueue(project: str, topic_id: str, *, priority: int = 1) -> dict[str
                 kind="topic_verification_incomplete",
                 details={"verification_record_id": vid},
             )
+        from orch.topic_graph import assert_topic_graph
+
+        assert_topic_graph(conn, topic_id)
+        root = get_project_path(project)
+        develop_sha = run_git_ref(
+            ["rev-parse", TARGET_BRANCH], root / BARE_DIR_NAME, check=True
+        ).stdout.strip()
+        pinned = row["verified_against_base"]
+        if not pinned or str(pinned) != develop_sha:
+            raise ValidationError(
+                "develop moved since topic-ready",
+                kind="topic_base_drift",
+                details={
+                    "verified_against_base": pinned,
+                    "develop": develop_sha,
+                },
+            )
         from orch.commands.enqueue import enqueue_unlocked
 
         result = enqueue_unlocked(
@@ -882,16 +956,20 @@ def topic_abandon(project: str, topic_id: str) -> dict[str, Any]:
                 details={"lifecycle_state": row["lifecycle_state"]},
             )
         now = utc_now_iso()
-        conn.execute(
-            """
-            UPDATE topics
-            SET lifecycle_state = 'cancelled', last_step = 'abandon',
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (now, topic_id),
-        )
-        conn.commit()
+        from orch.topic_graph import assert_topic_graph, detach_live_runs
+
+        with immediate_transaction(conn) as c:
+            detach_live_runs(c, topic_id)
+            c.execute(
+                """
+                UPDATE topics
+                SET lifecycle_state = 'cancelled', last_step = 'abandon',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, topic_id),
+            )
+            assert_topic_graph(c, topic_id)
         return {"topic_id": topic_id, "lifecycle_state": "cancelled", "abandoned": True}
     finally:
         conn.close()

@@ -244,6 +244,15 @@ class TopicReadyEnqueueTests(OrchEnvTestCase):
                     self.topic_id,
                 ),
             )
+            conn.execute(
+                """
+                UPDATE topics
+                SET lifecycle_state = 'active', active_run_id = 'run_auth',
+                    updated_at = 't'
+                WHERE id = ?
+                """,
+                (self.topic_id,),
+            )
             conn.commit()
         finally:
             conn.close()
@@ -341,6 +350,15 @@ class TopicReadyEnqueueTests(OrchEnvTestCase):
                     "t",
                     self.topic_id,
                 ),
+            )
+            conn.execute(
+                """
+                UPDATE topics
+                SET lifecycle_state = 'active', active_run_id = 'run_live',
+                    updated_at = 't'
+                WHERE id = ?
+                """,
+                (self.topic_id,),
             )
             conn.commit()
         finally:

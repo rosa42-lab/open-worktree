@@ -139,6 +139,10 @@ class RuntimeAdapterTests(unittest.TestCase):
         self.assertIsInstance(caps, CapabilityMatrix)
         self.assertTrue(caps.global_health)
         self.assertTrue(caps.basic_auth)
+        self.assertFalse(caps.create_session)
+        self.assertFalse(caps.prompt_async)
+        self.assertFalse(caps.abort)
+        self.assertFalse(caps.session_fork_api)
 
 
 if __name__ == "__main__":

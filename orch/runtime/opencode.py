@@ -40,25 +40,12 @@ class OpenCodeRuntimeAdapter:
             healthy = bool(h.get("healthy"))
         except Exception:  # noqa: BLE001
             healthy = False
-        return CapabilityMatrix(
+        from dataclasses import replace
+
+        return replace(
+            CapabilityMatrix.unknown(),
             global_health=healthy,
-            directory_header=True,
-            directory_query=False,
-            create_session=True,
-            get_session=True,
-            session_status=True,
-            event_sse=True,
-            abort=True,
-            instance_dispose=True,
-            prompt_async=True,
-            session_fork_api=True,
-            attach_cli_dir=True,
-            attach_cli_session=True,
-            attach_cli_fork=True,
             basic_auth=bool(self.client.password),
-            path_api=False,
-            vcs_api=False,
-            shell_api=False,
         )
 
     def create_session(

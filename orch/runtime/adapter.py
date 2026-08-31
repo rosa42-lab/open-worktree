@@ -49,6 +49,17 @@ class CapabilityMatrix:
             "shell_api": self.shell_api,
         }
 
+    @classmethod
+    def unknown(cls) -> "CapabilityMatrix":
+        return cls(**{name: False for name in cls.__dataclass_fields__})
+
+    def digest(self) -> str:
+        import hashlib
+        import json
+
+        blob = json.dumps(self.as_dict(), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
     @property
     def required_pass(self) -> bool:
         """Phase 0 hard requirements for shared-server architecture."""

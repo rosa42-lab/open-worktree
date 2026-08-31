@@ -386,9 +386,38 @@ class TopicCliLoopTests(OrchEnvTestCase):
 
     def test_argv_doctor_after_init(self) -> None:
         data = self._ok("doctor")
-        self.assertEqual(data["schema"]["classify"], "v4")
+        self.assertEqual(data["schema"]["classify"], "v5")
         self.assertEqual(data["conflicts"], [])
         self.assertEqual(data["orphans"], [])
+
+    def test_argv_enqueue_rejects_base_drift(self) -> None:
+        started = self._ok(
+            "topic-start",
+            "drift",
+            "--title",
+            "Drift",
+            "--goal",
+            "ship",
+            "--branch",
+            "feat/drift",
+            "--agent",
+            "coder",
+        )
+        topic_id = started["topic"]["id"]
+        wt = Path(started["topic"]["worktree_path"])
+        sha = commit_file(wt, "d.py", "d = 1\n")
+        self._ok("topic-ready", topic_id, "--commit", sha, "--command", "pytest")
+        conn = open_project_db(self.project, init=False)
+        try:
+            conn.execute(
+                "UPDATE topics SET verified_against_base = ? WHERE id = ?",
+                ("0" * 40, topic_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        err = self._err("topic-enqueue", topic_id)
+        self.assertEqual(err.get("kind"), "topic_base_drift")
 
     def test_argv_doctor_missing_database(self) -> None:
         from orch.constants import project_db_path

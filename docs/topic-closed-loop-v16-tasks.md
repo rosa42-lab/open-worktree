@@ -43,4 +43,4 @@ V16-001 canonical_worktree_path + 变体测试
 
 ## 后续：V17
 
-权威修正案：[topic-closed-loop-v17-amendment.md](topic-closed-loop-v17-amendment.md)。先契约，再 CLI help / id-or-name / `doctor`，再 schema 5 与 runtime fencing。
+权威修正案：[topic-closed-loop-v17-amendment.md](topic-closed-loop-v17-amendment.md)。V17 CLI 已落地。V18 实施记录：[topic-closed-loop-v18-plan.md](topic-closed-loop-v18-plan.md)。下一刀 V19 runtime 注入。连续开发执行器波次（V20）预备：[topic-continuous-dev-tasks.md](topic-continuous-dev-tasks.md)，不得插入 V19 之前。

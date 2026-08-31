@@ -199,6 +199,9 @@ def enqueue_unlocked(
                     """,
                     (task_id, topic_id, submitted, topic_id, project),
                 )
+                from orch.topic_graph import assert_topic_graph
+
+                assert_topic_graph(c, topic_id)
             write_audit(
                 c,
                 "enqueued",

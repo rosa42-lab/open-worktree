@@ -14,6 +14,7 @@ from orch.migrations import (
     SCHEMA_V2,
     SCHEMA_V3,
     SCHEMA_V4,
+    SCHEMA_V5,
     SchemaAmbiguousError,
     classify_db,
     ensure_schema,
@@ -39,7 +40,7 @@ class MigrationV13Tests(unittest.TestCase):
             conn = connect(db)
             result = ensure_schema(conn)
             self.assertEqual(result["action"], "init")
-            self.assertEqual(user_version(conn), SCHEMA_V4)
+            self.assertEqual(user_version(conn), SCHEMA_V5)
             self.assertTrue(is_v3_complete(conn))
             tables = {
                 r[0]

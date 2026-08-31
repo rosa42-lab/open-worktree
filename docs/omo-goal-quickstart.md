@@ -9,6 +9,7 @@
 |---|---|
 | [prompts/worktree-goal-quality-dev.md](prompts/worktree-goal-quality-dev.md) | Conductor 粘贴 Prompt（高质量开发） |
 | [omo-goal-models.example.json](omo-goal-models.example.json) | `oh-my-openagent.json` 模型 + goal 示例（无密钥） |
+| [topic-continuous-dev-final.md](topic-continuous-dev-final.md) | 专题连续开发：`/goal` 只催 conductor，不进 worker |
 
 ---
 

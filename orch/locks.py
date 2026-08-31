@@ -15,13 +15,33 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+import threading
 from orch.audit import write_audit
-from orch.constants import LOCK_WAIT_TIMEOUT_SEC
+from orch.constants import LOCK_WAIT_TIMEOUT_SEC, PROJECT_LOCK_NAME, RUNTIME_LOCK_NAME
 from orch.db import immediate_transaction
-from orch.errors import LockError
+from orch.errors import LockError, ValidationError
 from orch.util import utc_now_iso
 
 AuditFn = Callable[[dict[str, Any]], None]
+
+_tls = threading.local()
+
+
+def _held_families() -> list[str]:
+    held = getattr(_tls, "families", None)
+    if held is None:
+        held = []
+        _tls.families = held
+    return held
+
+
+def _lock_family(path: Path) -> str | None:
+    name = path.name
+    if name == PROJECT_LOCK_NAME:
+        return "project"
+    if name == RUNTIME_LOCK_NAME:
+        return "runtime"
+    return None
 
 
 @dataclass
@@ -29,6 +49,7 @@ class LockHandle:
     path: Path
     token: str
     payload: dict[str, Any]
+    family: str | None = None
 
 
 def _read_lock(path: Path) -> dict[str, Any] | None:
@@ -107,6 +128,16 @@ def acquire(
     audit_conn: sqlite3.Connection | None = None,
 ) -> LockHandle:
     path = Path(lock_path)
+    family = _lock_family(path)
+    if family:
+        held = set(_held_families())
+        other = "runtime" if family == "project" else "project"
+        if other in held:
+            raise ValidationError(
+                "cannot hold project.lock and runtime.lock at the same time",
+                kind="dual_lock_forbidden",
+                details={"held": sorted(held), "requested": family},
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     payload = {
@@ -151,7 +182,9 @@ def acquire(
         finally:
             os.close(fd)
 
-        handle = LockHandle(path=path, token=token, payload=payload)
+        handle = LockHandle(path=path, token=token, payload=payload, family=family)
+        if family:
+            _held_families().append(family)
         if audit_conn is not None and project is not None:
             try:
                 with immediate_transaction(audit_conn) as conn:
@@ -178,6 +211,13 @@ def release(
     audit_conn: sqlite3.Connection | None = None,
     reason: str = "release",
 ) -> None:
+    family = getattr(handle, "family", None)
+    if family:
+        held = _held_families()
+        for i in range(len(held) - 1, -1, -1):
+            if held[i] == family:
+                del held[i]
+                break
     path = handle.path
     if not path.exists():
         return
